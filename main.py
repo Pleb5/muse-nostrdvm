@@ -16,18 +16,18 @@ def playground(announce=False):
     admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
     admin_config.UPDATE_PROFILE = announce
 
-    name = "Generic DVM"
-    identifier = "a_very_generic_dvm"  # Chose a unique identifier in order to get a lnaddress
+    name = "TEST DVM FIVE"
+    identifier = "test_dvm_five"  # Chose a unique identifier in order to get a lnaddress
     dvm_config = build_default_config(identifier)
-    dvm_config.KIND = Kind(5050)  # Manually set the Kind Number (see data-vending-machines.org)
+    dvm_config.KIND = Kind(5300)  # Manually set the Kind Number (see data-vending-machines.org)
 
     # Add NIP89
     nip89info = {
         "name": name,
-        "image": "https://image.nostr.build/28da676a19841dcfa7dcf7124be6816842d14b84f6046462d2a3f1268fe58d03.png",
-        "about": "I'm just a demo DVM, not doing much.'",
-        "encryptionSupported": True,
-        "cashuAccepted": True,
+        "image": "https://satshoot.com/satshoot.svg",
+        "about": "Test Nostr DVM!'",
+        "encryptionSupported": False,
+        "cashuAccepted": False,
         "nip90Params": {
         }
     }
