@@ -35,7 +35,7 @@ class AdminConfig:
     USERNPUBS: list = []
 
     EVENTID: str = ""
-    PRIVKEY: str = ""
+    PRIVKEY: str = "nsec1**** # MODIFY ME!!!"
 
 
 async def admin_make_database_updates(adminconfig: AdminConfig = None, dvmconfig: DVMConfig = None,

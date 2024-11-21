@@ -9,4 +9,4 @@ fi
 
 input_file="$1"
 
-sed -E 's/(nsec)([0-9ac-hj-np-z]{28})(.*)/\1**** # MODIFY ME!!!\3/g' "$input_file"
+sed -E 's/(nsec1)([0-9ac-hj-np-z]{58})(.*)/\1**** # MODIFY ME!!!\3/g' "$input_file"
