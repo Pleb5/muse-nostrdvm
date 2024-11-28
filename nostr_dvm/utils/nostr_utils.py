@@ -7,7 +7,7 @@ from typing import List
 import dotenv
 from nostr_sdk import Filter, Client, Alphabet, EventId, Event, PublicKey, Tag, Keys, nip04_decrypt, Metadata, Options, \
     Nip19Event, SingleLetterTag, RelayLimits, SecretKey, NostrSigner, Connection, ConnectionTarget, \
-    EventSource, EventBuilder, Kind
+    EventBuilder, Kind
 
 from nostr_dvm.utils.definitions import EventDefinitions, relay_timeout
 
@@ -33,8 +33,7 @@ async def get_event_by_id(event_id_str: str, client: Client, config=None) -> Eve
 
 
 async def get_events_async(client, filter, timeout):
-    source_l = EventSource.relays(timedelta(seconds=timeout))
-    events = await client.fetch_events([filter], source_l)
+    events = await client.fetch_events([filter], timedelta(seconds=timeout))
     return events.to_vec()
 
 

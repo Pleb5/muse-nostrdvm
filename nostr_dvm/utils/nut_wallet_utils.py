@@ -115,7 +115,6 @@ class NutZapWallet:
         nut_wallet = None
 
         wallet_filter = Filter().kind(EventDefinitions.KIND_NUT_WALLET).author(keys.public_key())
-        # relay_timeout = EventSource.relays(timedelta(seconds=10))
         wallets = await client.fetch_events([wallet_filter], timedelta(seconds=10))
 
         if len(wallets.to_vec()) > 0:
