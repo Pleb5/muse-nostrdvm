@@ -1,57 +1,134 @@
+from datetime import datetime
+import os
+import asyncio
 import json
 from pathlib import Path
 import dotenv
 
-from nostr_dvm.tasks.generic_dvm import GenericDVM
+from nostr_dvm.interfaces.dvmtaskinterface import DVMTaskInterface, process_venv
+from nostr_dvm.tasks.content_discovery_update_db_only import DicoverContentDBUpdateScheduler
+from nostr_dvm.tasks.test_content_discovery_current_popular_notes import TestDicoverContentCurrentlyPopular, build_test
 from nostr_dvm.utils.admin_utils import AdminConfig
-from nostr_dvm.utils.dvmconfig import build_default_config
-from nostr_dvm.utils.nip89_utils import NIP89Config, check_and_set_d_tag
-from nostr_sdk import Keys, Kind
+from nostr_dvm.utils.definitions import EventDefinitions
+from nostr_dvm.utils.dvmconfig import DVMConfig, build_default_config
+from nostr_dvm.utils.nip89_utils import NIP89Config, check_and_set_d_tag, create_amount_tag
+from nostr_sdk import Keys, Kind, LogLevel
 
 
 
-def playground(announce=False):
-    admin_config = AdminConfig()
-    admin_config.REBROADCAST_NIP89 = announce
-    admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
-    admin_config.UPDATE_PROFILE = announce
+async def configure_and_start_DVM():
+    try:
+        # ------------------- ADMIN CONFIG
+        admin_config = AdminConfig()
+        admin_config.PRIVKEY = os.getenv("ADMIN_PRIVATE_KEY")
+        admin_config.REBROADCAST_NIP89 = True
+        admin_config.REBROADCAST_NIP65_RELAY_LIST = True
+        admin_config.UPDATE_PROFILE = True
+        admin_config.LUD16 = 'five@npub.cash'
 
-    name = "Generic DVM"
-    identifier = "a_very_generic_dvm"  # Chose a unique identifier in order to get a lnaddress
-    dvm_config = build_default_config(identifier)
-    dvm_config.KIND = Kind(5050)  # Manually set the Kind Number (see data-vending-machines.org)
+        # ------------------- DVM CONFIG
+        dvm_config = DVMConfig()
+        dvm_config.LOGLEVEL = LogLevel.DEBUG
+        dvm_config.PRIVATE_KEY: str = os.getenv("DVM_PRIVATE_KEY")
+        dvm_config.FIX_COST: float = 0
+        dvm_config.PER_UNIT_COST: float = 0
 
-    # Add NIP89
-    nip89info = {
-        "name": name,
-        "picture": "https://image.nostr.build/28da676a19841dcfa7dcf7124be6816842d14b84f6046462d2a3f1268fe58d03.png",
-        "about": "I'm just a demo DVM, not doing much.'",
-        "supportsEncryption": True,
-        "acceptsNutZaps": dvm_config.ENABLE_NUTZAP,
-        "nip90Params": {
+        dvm_config.USE_OWN_VENV = False
+        dvm_config.SCHEDULE_UPDATES_SECONDS = 120  # Every 10 minutes
+        dvm_config.UPDATE_DATABASE = True
+        dvm_config.CUSTOM_PROCESSING_MESSAGE = None
+        dvm_config.LN_ADDRESS = admin_config.LUD16
+
+        dvm_config.RELAY_LIST = [
+                "wss://relay.primal.net",
+                "wss://nostr.mom",
+                "wss://nostr.oxtr.dev",
+            ]
+
+        dvm_config.SYNC_DB_RELAY_LIST = [
+                "wss://relay.damus.io",
+                "wss://nos.lol",
+                "wss://nostr.oxtr.dev",
+            ]
+
+        dvm_config.WOT_FILTERING = True
+
+        dvm_config.WOT_BASED_ON_NPUBS = [
+                # Don'tBelieveTheHype
+                "99bb5591c9116600f845107d31f9b59e2f7c7e09a1ff802e84f1d43da557ca64",
+                # Vitor Pamplona
+                "460c25e682fda7832b52d1f22d3d22b3176d972f60dcdc3212ed8c92ef85065c",
+                # Derek Ross
+                "3f770d65d3a764a9c5cb503ae123e62ec7598ad035d836e2a810f3877a745b24",
+                #Five
+                "d04ecf33a303a59852fdb681ed8b412201ba85d8d2199aec73cb62681d62aa90"
+            ]
+        dvm_config.WOT_DEPTH = 2
+
+        dvm_config.RELAY_TIMEOUT = 5
+        dvm_config.RELAY_LONG_TIMEOUT = 30
+
+
+        # ------------------- NIP89 CONFIG
+        name = "Five Test Content Discovery DVM"
+        image = "https://i.nostr.build/yq7a5.jpg"
+        identifier = "five_test_content_discovery" 
+        cost = 0
+
+        # Add NIP89
+        nip89info = {
+                "name": name,
+                "picture": image,
+                "about": "TEST I show notes that are currently popular",
+                "lud16": dvm_config.LN_ADDRESS,
+                "supportsEncryption": False,
+                "acceptsNutZaps": False,
+                "personalized": False,
+                "amount": create_amount_tag(cost),
+                "nip90Params": {
+                    "max_results": {
+                        "required": False,
+                        "values": [],
+                        "description": "The number of maximum results to return (default currently 200)"
+                    }
+                }
+            }
+
+        nip89config = NIP89Config()
+        nip89config.DTAG = check_and_set_d_tag(
+                identifier,
+                name,
+                dvm_config.PRIVATE_KEY,
+                nip89info["picture"]
+            )
+
+        nip89config.CONTENT = json.dumps(nip89info)
+        nip89config.KIND = EventDefinitions.KIND_NIP90_CONTENT_DISCOVERY
+        nip89config.NAME = name
+        nip89config.PK = dvm_config.PRIVATE_KEY
+
+        options = {
+            "max_results": 200,
+            "db_name": "db/test_recent_notes.db", 
+            "db_since": 3600 * 24 * 30, # last 30 days
+            "max_db_size" : 1024,
+            "personalized": False
         }
-    }
 
-    nip89config = NIP89Config()
-    nip89config.DTAG = check_and_set_d_tag(identifier, name, dvm_config.PRIVATE_KEY, nip89info["picture"])
-    nip89config.CONTENT = json.dumps(nip89info)
+        dvm = await build_test(
+            name,
+            dvm_config,
+            nip89config,
+            None,
+            admin_config,
+            options
+        )
 
-    options = {
-        "some_option": "#RunDVM",
-    }
+        dvm.run(True)
 
-    dvm = GenericDVM(name=name, dvm_config=dvm_config, nip89config=nip89config,
-                     admin_config=admin_config, options=options)
+    except ValueError as e:
+        print(f"Error executing DVM: {e}")
 
-    async def process(request_form):
-        options = dvm.set_options(request_form)
-        result = "The result of the DVM is: "
-        result += options["some_option"]
-        print(result)
-        return result
-
-    dvm.process = process  # overwrite the process function with the above one
-    dvm.run(True)
 
 if __name__ == '__main__':
     env_path = Path('.env')
@@ -64,6 +141,5 @@ if __name__ == '__main__':
         dotenv.load_dotenv(env_path, verbose=True, override=True)
     else:
         raise FileNotFoundError(f'.env file not found at {env_path} ')
-    announce = False
 
-    playground(announce=announce)
+    asyncio.run(configure_and_start_DVM())

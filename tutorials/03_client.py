@@ -26,8 +26,8 @@ async def nostr_client_generic_test(ptag):
     # The alt tag is optional, and just describes what the event does.
     alttag = Tag.parse(["alt", "This is a NIP90 DVM AI task"])
 
-    #We know our DVM has an option some_option. We can also overwrite it by setting the parameter.
-    paramTag = Tag.parse(["param", "some_option", "#RUNDVM - The client puts the option."])
+    #We know our DVM has an option some_example_option. We can also overwrite it by setting the parameter.
+    paramTag = Tag.parse(["param", "some_example_option", "#RUNDVM - asdf The client puts the option."])
     # The ptag tags the DVM we want to address. Make sure to set it down in the main function.
     pTag = Tag.parse(["p", PublicKey.parse(ptag).to_hex()])
 
@@ -124,5 +124,5 @@ if __name__ == '__main__':
         raise FileNotFoundError(f'.env file not found at {env_path} ')
 
     # Replace this key with the one from your DVM from part 3.
-    target_dvm_npub = "aaf3b2bda1f19651417af4b1ccc35ebb6675d718843fdc444bdca4da1c8cd2fc"
+    target_dvm_npub = "npub1sr4wtsay3hec596tzgrul50qhclwv9jkncj0gn7q5kanqu4hdpcs96jwc5"
     asyncio.run(nostr_client(target_dvm_npub))

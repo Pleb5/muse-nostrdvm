@@ -18,7 +18,7 @@ def run_dvm(identifier):
     # by setting the CHATBOT option to true
     bot_config.CHATBOT = True
     # And we simply hand over the publickey of our DVM from tutorial 1
-    bot_config.DVM_KEY = "aa8ab5b774d47e7b29a985dd739cfdcccf93451678bf7977ba1b2e094ecd8b30" # TODO replace with your DVM
+    bot_config.DVM_KEY = "80eae5c3a48df38a174b1207cfd1e0be3ee616569e24f44fc0a5bb3072b76871" # TODO replace with your DVM
 
     # We update our relay list and profile and Start the bot
     admin_config = AdminConfig()

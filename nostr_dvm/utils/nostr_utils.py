@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List
 
 import dotenv
-from nostr_sdk import Filter, Client, Alphabet, EventId, Event, PublicKey, Tag, Keys, nip04_decrypt, nip44_decrypt,  Metadata, Options, \
+from nostr_sdk import Filter, Client, Alphabet, EventId, Event, PublicKey, Tag, Keys, nip04_encrypt, nip04_decrypt, nip44_decrypt,  Metadata, Options, \
     Nip19Event, SingleLetterTag, RelayLimits, SecretKey, Connection, ConnectionTarget, \
     EventBuilder, Kind, ClientBuilder, SendEventOutput, NostrSigner
 
@@ -418,8 +418,9 @@ async def update_profile(dvm_config, client, lud16=""):
 
 
 async def send_nip04_dm(client: Client, msg, receiver: PublicKey, dvm_config):
+    print('sending dm: ' + msg + '...')
     keys = Keys.parse(dvm_config.PRIVATE_KEY)
-    content = await keys.nip04_encrypt(receiver, msg)
+    content = nip04_encrypt(keys.secret_key(), receiver, msg)
     ptag = Tag.parse(["p", receiver.to_hex()])
     event = EventBuilder(Kind(4), content).tags([ptag]).sign_with_keys(Keys.parse(dvm_config.PRIVATE_KEY))
     await client.send_event(event)

@@ -23,9 +23,9 @@ def run_dvm(identifier, announce):
     kind = Kind(5050)
     dvm_config.KIND = kind
     options = {
-        "some_option": "#RunDVM",
+        "some_example_option": "#RunDVM",
     }
-    name = "My very first DVM"
+    name = "My second DVM"
 
     # First thing you'll notice we set the parameter REBROADCAST_NIP89. If we set announce to true when we call our function,
     # it will announce the DVM on Nostr, it is set to false by default here, so you don't accidently do it, but feel free to set it to true
@@ -52,10 +52,10 @@ def run_dvm(identifier, announce):
     nip89info = {
         "name": name,
         "picture": "https://image.nostr.build/28da676a19841dcfa7dcf7124be6816842d14b84f6046462d2a3f1268fe58d03.png",
-        "about": "I'm a very simply DVM that always responds with the same message.",
+        "about": "I'm a very simple DVM that always responds with the same message. How dumb is that?!",
         "supportsEncryption": True,
         "nip90Params": {
-            "some_option": {
+            "some_example_option": {
                 "required": False,
                 "values": []
             }
@@ -88,7 +88,7 @@ def run_dvm(identifier, announce):
     async def process(request_form):
         options = dvm.set_options(request_form)
         result = "The result of the DVM is: "
-        result += options["some_option"]
+        result += options["some_example_option"]
         print(result)
         return result
 
@@ -113,7 +113,7 @@ if __name__ == '__main__':
     #A unique identifier that will be used to store keys in your .env file as well as for your ln address.
     # (If its already used it will get some random letters to it)
     identifier = "tutorial01"
-    announce = False
+    announce = True
     # psst, you can change your lightning address here:
     #asyncio.run(change_ln_address(identifier, "test",  DVMConfig(), True))
 
