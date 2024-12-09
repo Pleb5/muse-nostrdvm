@@ -240,7 +240,7 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
                 result_event = await self.process(self.request_form)
 
                 try:
-                    with open("test_result.txt_" + timestamp, 'w', encoding="utf8") as output_file:
+                    with open("test_result_" + timestamp + '.txt', 'w', encoding="utf8") as output_file:
                         output_file.write(result_event)
                         print(f"Result written to {output_file.name}")
                 except Exception as e:
