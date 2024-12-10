@@ -30,6 +30,7 @@ async def configure_and_start_DVM():
         dvm_config = DVMConfig()
         dvm_config.LOGLEVEL = LogLevel.DEBUG
         dvm_config.PRIVATE_KEY: str = os.getenv("DVM_PRIVATE_KEY")
+        dvm_config.PUBLIC_KEY = Keys.parse(dvm_config.PRIVATE_KEY).public_key().to_hex()
         dvm_config.FIX_COST: float = 0
         dvm_config.PER_UNIT_COST: float = 0
 
@@ -55,11 +56,11 @@ async def configure_and_start_DVM():
 
         dvm_config.WOT_BASED_ON_NPUBS = [
                 # Don'tBelieveTheHype
-                "99bb5591c9116600f845107d31f9b59e2f7c7e09a1ff802e84f1d43da557ca64",
+                # "99bb5591c9116600f845107d31f9b59e2f7c7e09a1ff802e84f1d43da557ca64",
                 # Vitor Pamplona
-                "460c25e682fda7832b52d1f22d3d22b3176d972f60dcdc3212ed8c92ef85065c",
+                # "460c25e682fda7832b52d1f22d3d22b3176d972f60dcdc3212ed8c92ef85065c",
                 # Derek Ross
-                "3f770d65d3a764a9c5cb503ae123e62ec7598ad035d836e2a810f3877a745b24",
+                # "3f770d65d3a764a9c5cb503ae123e62ec7598ad035d836e2a810f3877a745b24",
                 #Five
                 "d04ecf33a303a59852fdb681ed8b412201ba85d8d2199aec73cb62681d62aa90"
             ]
@@ -67,6 +68,8 @@ async def configure_and_start_DVM():
 
         dvm_config.RELAY_TIMEOUT = 5
         dvm_config.RELAY_LONG_TIMEOUT = 30
+
+        dvm_config.CUSTOM_PROCESSING_MESSAGE = "TEST Processing request..."
 
 
         # ------------------- NIP89 CONFIG
@@ -109,7 +112,7 @@ async def configure_and_start_DVM():
 
         options = {
             "max_results": 200,
-            "db_name": "db/test_recent_notes.db", 
+            "db_name": "db/test_content_discovery", 
             "db_since": 3600 * 24 * 30, # last 30 days
             "max_db_size" : 1024,
             "personalized": False

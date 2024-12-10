@@ -32,7 +32,7 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
     request_form = None
     last_schedule: int = 0
     db_since = 3600
-    db_name = "db/nostr_recent_notes.db"
+    db_name = "db/default.db"
     min_reactions = 5
     personalized = False
     result = ""
@@ -44,8 +44,8 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
         name,
         dvm_config: DVMConfig,
         nip89config: NIP89Config,
-        nip88config: NIP88Config = None,
-        admin_config: AdminConfig = None,
+        nip88config: NIP88Config|None = None,
+        admin_config: AdminConfig|None = None,
         options=None,
         task=None
     ):
@@ -53,6 +53,7 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
         self.NAME = name
         self.dvm_config = dvm_config
         self.dvm_config.NIP89 = nip89config
+        self.dvm_config.NIP88 = nip88config
         self.dvm_config.SUPPORTED_DVMS = [self]
         self.admin_config = admin_config
         self.wot_counter = 0
@@ -74,13 +75,12 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
             is None or the key does not exist. Add valid option!") 
 
         opts = {
-            "max_results": int(self.options.get("max_results"))
+            "max_results": max_results
         }
 
         self.request_form['options'] = json.dumps(opts)
 
         self.db_name = self.options.get("db_name")
-        self.dvm_config.DB = self.db_name
 
         db_since = self.options.get("db_since")
         self.max_db_size = self.options.get("max_db_size")
@@ -102,8 +102,15 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
         options=None
     ):
         print("Init db")
-        self.database = await init_db(self.db_name, True, self.max_db_size)
-        print("Init db DONE")
+        self.database = await init_db(
+            self.db_name,
+            True,
+            self.max_db_size
+        )
+
+        self.dvm_config.DB = self.db_name + '/users.db'
+
+        print(f"Init db DONE{self.database.metadata}")
 
         init_logger(dvm_config.LOGLEVEL)
 
@@ -118,13 +125,8 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
         return True
 
     async def create_request_from_nostr_event(self, event, client=None, dvm_config=None):
-        self.dvm_config = dvm_config
-
         request_form = {"jobID": event.id().to_hex()}
-
-        # default values
-        search = ""
-        max_results = 200
+        max_results = int(self.options.get("max_results"))
 
         for tag in event.tags().to_vec():
             if tag.as_vec()[0] == 'i':
@@ -136,8 +138,11 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
 
         options = {
             "max_results": max_results,
+            "request_event_id": event.id().to_hex(),
+            "request_event_author": event.author().to_hex()
         }
         request_form['options'] = json.dumps(options)
+        self.request_form = request_form
         return request_form
 
     async def process(self, request_form):
@@ -156,7 +161,6 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
         ns = SimpleNamespace()
 
         options = self.set_options(request_form)
-        database = NostrDatabase.lmdb(self.db_name)
 
         print(f"request_form: {request_form}")
 
@@ -165,7 +169,8 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
 
         filter1 = Filter().kind(definitions.EventDefinitions.KIND_NOTE).since(since)
 
-        events = await database.query([filter1])
+        print(f"DB in calc result: {self.database}")
+        events = await self.database.query([filter1])
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print("[" + self.dvm_config.NIP89.NAME + "] Considering " + str(len(events.to_vec())) + " Events")
         ns.finallist = {}
@@ -180,7 +185,7 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
                     ]
                 ).event(event.id()).since(since)
 
-                reactions = await database.query([filt])
+                reactions = await self.database.query([filt])
 
                 if len(reactions.to_vec()) >= self.min_reactions:
                     ns.finallist[event.id().to_hex()] = len(reactions.to_vec())
@@ -252,6 +257,7 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
 
     async def sync_db(self):
         print("Sync db")
+        print(f"DB in sync_db: {self.database}")
         if self.database is None:
             raise ValueError("Database cannot be None when trying to sync up!")
 
@@ -265,11 +271,9 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
             sk = SecretKey.from_hex(self.dvm_config.PRIVATE_KEY)
             keys = Keys.parse(sk.to_hex())
 
-            database = NostrDatabase.lmdb(self.db_name)
-
             cli = ClientBuilder().signer(
                 NostrSigner.keys(keys)
-            ).database(database).build()
+            ).database(self.database).build()
 
             for relay in self.dvm_config.SYNC_DB_RELAY_LIST:
                 await cli.add_relay(relay)

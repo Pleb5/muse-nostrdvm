@@ -57,7 +57,7 @@ class DVMConfig:
     DATABASE = None
     NEW_USER_BALANCE: int = 0  # Free credits for new users
     SUBSCRIPTION_MANAGEMENT = 'https://noogle.lol/discovery'
-    NIP88: NIP88Config = NIP88Config()
+    NIP88: NIP88Config|None = NIP88Config()
     NIP89: NIP89Config = NIP89Config()
     SEND_FEEDBACK_EVENTS = True
     SHOW_RESULT_BEFORE_PAYMENT: bool = True  # if this is true show results even when not paid right after autoprocess
