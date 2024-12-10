@@ -738,7 +738,7 @@ export default {
 
                   let nip88 = {
                     title: "",
-                    image: "",
+                    picture: "",
                     amounts: [],
                     zaps: [],
                     perks: [],

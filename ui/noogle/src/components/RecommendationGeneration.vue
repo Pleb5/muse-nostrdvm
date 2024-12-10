@@ -34,6 +34,7 @@ import {webln} from "@getalby/sdk";
 
 
 import StringUtil from "@/components/helper/string.ts";
+import {tag_single_letter_tag} from "@rust-nostr/nostr-sdk/pkg/nostr_sdk_js_bg.wasm.js";
 
 
 let dvms = []
@@ -362,8 +363,24 @@ async function listen() {
 
                   } else {
 
-
+                    let kind20image = ""
                     let p = profiles.find(record => record.author === evt.author.toHex())
+                    //olas
+
+                    if (evt.kind === 20) {
+                      for (let tag of evt.tags) {
+                        if (tag.asVec()[0] === "imeta") {
+                          for (let subtag of tag.asVec()) {
+                            if (subtag.startsWith("url")) {
+                              kind20image = subtag.slice(4)
+                            }
+                          }
+                        }
+
+                      }
+                    }
+
+
                     let bech32id = evt.id.toBech32()
                     let nip19 = new Nip19Event(evt.id, evt.author, store.state.relays)
                     let nip19bech32 = nip19.toBech32()
@@ -406,7 +423,8 @@ async function listen() {
                         boosts: react.reposts,
                         boosted: react.repostedbyUser,
                         replied: false,
-                        response: ref("")
+                        response: ref(""),
+                        kind20_image: kind20image
 
                       })
                       index = index + 1
@@ -502,7 +520,7 @@ async function addAllContentDVMs() {
         result: [],
         name: el.name,
         about: el.about,
-        image: el.image,
+        image: el.picture,
         amount: el.amount,
         encryptionSupported: el.encryptionSupported,
         cashuAccepted: el.cashuAccepted,
@@ -583,7 +601,7 @@ async function addDVM(event) {
     if (JSON.parse(el.event).pubkey === event.author.toHex()) {
       jsonentry.name = el.name
       jsonentry.about = el.about
-      jsonentry.image = el.image
+      jsonentry.image = el.picture
       jsonentry.lud16 = el.lud16
       jsonentry.encryptionSupported = el.encryptionSupported
       jsonentry.cashuAccepted = el.cashuAccepted

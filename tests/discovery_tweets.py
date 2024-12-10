@@ -6,7 +6,7 @@ import dotenv
 from nostr_sdk import init_logger, LogLevel
 
 # os.environ["RUST_BACKTRACE"] = "full"
-from nostr_dvm.tasks.content_discovery_currently_popular_topic import DicoverContentCurrentlyPopularbyTopic
+from nostr_dvm.tasks.content_discovery_currently_popular_tweets import DicoverContentCurrentlyPopularTweets
 from nostr_dvm.tasks.content_discovery_update_db_only import DicoverContentDBUpdateScheduler
 from nostr_dvm.utils.admin_utils import AdminConfig
 from nostr_dvm.utils.database_utils import init_db
@@ -81,7 +81,7 @@ def build_db_scheduler(name, identifier, admin_config, options, image, descripti
                                            admin_config=admin_config, options=options)
 
 
-def build_example_topic(name, identifier, admin_config, options, image, description, update_rate=600, cost=0,
+def build_example_tweets(name, identifier, admin_config, options, image, description, update_rate=600, cost=0,
                         processing_msg=None, update_db=True, database=None):
     dvm_config = build_default_config(identifier)
     dvm_config.USE_OWN_VENV = False
@@ -121,7 +121,7 @@ def build_example_topic(name, identifier, admin_config, options, image, descript
     nip89config.DTAG = check_and_set_d_tag(identifier, name, dvm_config.PRIVATE_KEY, nip89info["picture"])
     nip89config.CONTENT = json.dumps(nip89info)
 
-    return DicoverContentCurrentlyPopularbyTopic(name=name, dvm_config=dvm_config, nip89config=nip89config,
+    return DicoverContentCurrentlyPopularTweets(name=name, dvm_config=dvm_config, nip89config=nip89config,
                                                  admin_config=admin_config, options=options)
 
 
@@ -151,50 +151,26 @@ def playground():
                                       database=database)
     db_scheduler.run()
 
-    # Popular Animals (Fluffy frens)
+    # Popular Tweets 
     admin_config = AdminConfig()
     admin_config.REBROADCAST_NIP89 = rebroadcast_NIP89
     admin_config.REBROADCAST_NIP65_RELAY_LIST = rebroadcast_NIP65_Relay_List
     admin_config.UPDATE_PROFILE = update_profile
 
     options = {
-        "search_list": ["catstr", "pawstr", "dogstr", "pugstr", " cat ", " cats ", "doggo", " deer ", " dog ", " dogs ",
-                        " fluffy ",
-                        " animal",
-                        " duck", " lion ", " lions ", " fox ", " foxes ", " koala ", " koalas ", "capybara", "squirrel",
-                        " monkey", " panda", "alpaca", " otter"],
-        "avoid_list": ["porn", "broth", "smoke", "nsfw", "bitcoin", "bolt12", "bolt11", "github", "currency", "utxo",
-                       "encryption", "government", "airpod", "ipad", "iphone", "android", "warren",
-                       "moderna", "pfizer", " meat ", "pc mouse", "shotgun", "vagina", "rune", "testicle", "victim",
-                       "sexualize", "murder", "tax", "engagement", "hodlers", "hodl", "gdp", "global markets", "crypto",
-                       "presidency", "dollar", "asset", "microsoft", "amazon", "billionaire", "ceo", "industry",
-                       "white house", "hot dog", "spirit animal", "migrant", "invasion", "blocks", "streaming",
-                       "summary", "duckfat", "carnivore", "protein", "fats", "ass",
-                       "wealth", "beef", "cunt", "nigger", "business", "tore off", "chart", "critical theory",
-                       "law of nature",
-                       "retail", "bakery", "synth", "slaughterhouse", "hamas", "dog days", "ww3", "socialmedia",
-                       "nintendo", "signature", "deepfake", "congressman", "fried chicken", "cypherpunk",
-                       "social media",
-                       "chef", "cooked", "foodstr", "minister", "dissentwatch", "inkblot", "covid", "robot", "pandemic",
-                       " dies ", "bethesda", " defi ", " minister ", "nostr-hotter-site", " ai ", "palestine",
-                       "animalistic", "wherostr",
-                       " hit by a", "https://boards.4chan", "https://techcrunch.com", "https://screenrant.com"],
-
-        "must_list": ["http"],
         "db_name": "db/nostr_recent_notes.db",
-        "db_since": 24 * 60 * 60,  # 48h since gmt,
+        "db_since": 24 * 60 * 60 * 4,  # 48h since gmt,
         "personalized": False,
         "logger": False}
 
-    image = "https://image.nostr.build/f609311532c470f663e129510a76c9a1912ae9bc4aaaf058e5ba21cfb512c88e.jpg"
-    description = "I show recent notes about animals"
+    image = "https://image.nostr.build/53536b3eccb03fdb127849b79f85b0b6ecb241d12068b65f52afe4a4650d5318.jpg"
+    description = "I show popular tweets."
 
-    custom_processing_msg = ["Looking for fluffy frens...", "Let's see if we find some animals for you..",
-                             "Looking for the goodest bois and girls.."]
+    custom_processing_msg = ["Tweets are short notes"]
     cost = 0
     update_db = False  # we use the DB scheduler above for a shared database. Or don't use it and let the DVM manage it
-    discovery_animals = build_example_topic("Fluffy Frens",
-                                            "discovery_content_fluffy",
+    discovery_tweets= build_example_tweets("Popular Tweets",
+                                            "discovery_content_tweets",
                                             admin_config, options,
                                             image=image,
                                             description=description,
@@ -204,7 +180,7 @@ def playground():
                                             update_db=update_db,
                                             database=database)
 
-    discovery_animals.run()
+    discovery_tweets.run()
 
 
 if __name__ == '__main__':

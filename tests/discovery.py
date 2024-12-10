@@ -18,6 +18,7 @@ from nostr_dvm.tasks.content_discovery_currently_popular_gallery import DicoverC
 from nostr_dvm.tasks.content_discovery_currently_popular_mostr import DicoverContentCurrentlyPopularMostr
 from nostr_dvm.tasks.content_discovery_currently_popular_nonfollowers import DicoverContentCurrentlyPopularNonFollowers
 from nostr_dvm.tasks.content_discovery_currently_popular_topic import DicoverContentCurrentlyPopularbyTopic
+from nostr_dvm.tasks.content_discovery_currently_popular_tweets import DicoverContentCurrentlyPopularTweets
 from nostr_dvm.tasks.content_discovery_latest_one_per_follower import Discoverlatestperfollower
 from nostr_dvm.tasks.content_discovery_update_db_only import DicoverContentDBUpdateScheduler
 from nostr_dvm.tasks.discovery_trending_notes_nostrband import TrendingNotesNostrBand
@@ -65,6 +66,10 @@ def build_db_scheduler(name, identifier, admin_config, options, image, descripti
     dvm_config.RELAY_LIST = RELAY_LIST
     dvm_config.DATABASE = database
     dvm_config.WOT_FILTERING = True
+    dvm_config.WOT_BASED_ON_NPUBS = ["99bb5591c9116600f845107d31f9b59e2f7c7e09a1ff802e84f1d43da557ca64",
+                          "460c25e682fda7832b52d1f22d3d22b3176d972f60dcdc3212ed8c92ef85065c",
+                          "3f770d65d3a764a9c5cb503ae123e62ec7598ad035d836e2a810f3877a745b24"
+                          ]
 
     # Activate these to use a subscription based model instead
     # dvm_config.SUBSCRIPTION_REQUIRED = True
@@ -98,6 +103,51 @@ def build_db_scheduler(name, identifier, admin_config, options, image, descripti
 
     return DicoverContentDBUpdateScheduler(name=name, dvm_config=dvm_config, nip89config=nip89config,
                                            admin_config=admin_config, options=options)
+
+
+def build_example_tweets(name, identifier, admin_config, options, image, description, update_rate=600, cost=0,
+                        processing_msg=None, update_db=True, database=None):
+    dvm_config = build_default_config(identifier)
+    dvm_config.USE_OWN_VENV = False
+    dvm_config.SHOWLOG = True
+    dvm_config.SCHEDULE_UPDATES_SECONDS = update_rate  # Every 10 minutes
+    dvm_config.UPDATE_DATABASE = update_db
+    dvm_config.FIX_COST = cost
+    dvm_config.LOGLEVEL = LogLevel.INFO
+    dvm_config.CUSTOM_PROCESSING_MESSAGE = processing_msg
+    dvm_config.AVOID_OUTBOX_RELAY_LIST = AVOID_OUTBOX_RELAY_LIST
+    dvm_config.SYNC_DB_RELAY_LIST = SYNC_DB_RELAY_LIST
+    dvm_config.RELAY_LIST = RELAY_LIST
+    dvm_config.DATABASE = database
+    dvm_config.SEND_FEEDBACK_EVENTS = False
+    admin_config.LUD16 = dvm_config.LN_ADDRESS
+
+    # Add NIP89
+    nip89info = {
+        "name": name,
+        "picture": image,
+        "about": description,
+        "lud16": dvm_config.LN_ADDRESS,
+        "supportsEncryption": True,
+        "acceptsNutZaps": dvm_config.ENABLE_NUTZAP,
+        "personalized": False,
+        "amount": create_amount_tag(cost),
+        "nip90Params": {
+            "max_results": {
+                "required": False,
+                "values": [],
+                "description": "The number of maximum results to return (default currently 100)"
+            }
+        }
+    }
+
+    nip89config = NIP89Config()
+    nip89config.DTAG = check_and_set_d_tag(identifier, name, dvm_config.PRIVATE_KEY, nip89info["picture"])
+    nip89config.CONTENT = json.dumps(nip89info)
+
+    return DicoverContentCurrentlyPopularTweets(name=name, dvm_config=dvm_config, nip89config=nip89config,
+                                                 admin_config=admin_config, options=options)
+
 
 
 def build_example_gallery(name, identifier, admin_config, options, image, cost=0, update_rate=180, processing_msg=None,
@@ -157,7 +207,7 @@ def build_example_nostrband(name, identifier, admin_config, image, about, custom
         "name": name,
         "picture": image,
         "about": about,
-        "amount": "Free",
+        "amount": "free",
         "supportsEncryption": True,
         "acceptsNutZaps": dvm_config.ENABLE_NUTZAP,
         "nip90Params": {}
@@ -589,7 +639,7 @@ def build_example_oneperfollow(name, identifier, admin_config, options, image, c
         "lud16": dvm_config.LN_ADDRESS,
         "supportsEncryption": True,
         "acceptsNutZaps": dvm_config.ENABLE_NUTZAP,
-        "personalized": False,
+        "personalized": True,
         "amount": create_amount_tag(cost),
         "nip90Params": {
             "max_results": {
@@ -835,10 +885,10 @@ def playground():
     admin_config_mining.REBROADCAST_NIP89 = rebroadcast_NIP89
     admin_config_mining.REBROADCAST_NIP65_RELAY_LIST = rebroadcast_NIP65_Relay_List
     admin_config_mining.UPDATE_PROFILE = update_profile
-    # admin_config_plants.DELETE_NIP89 = True
-    # admin_config_plants.PRIVKEY = ""
-    # admin_config_plants.EVENTID = "ff28be59708ee597c7010fd43a7e649e1ab51da491266ca82a84177e0007e4d6"
-    # admin_config_plants.POW = True
+    #admin_config_mining.DELETE_NIP89 = True
+    #admin_config_mining.PRIVKEY = ""
+    #admin_config_mining.EVENTID = "26a60420379197142f5d7e68fcaac1825b14228c803e2dd80579fe2da581942f"
+    #admin_config_mining.POW = True
     options_mining = {
         "search_list": ["bitaxe", "homeminer", " S9 ", "homemining"],
         "avoid_list": ["nsfw"],
@@ -862,6 +912,42 @@ def playground():
                                            update_db=update_db,
                                            database=DATABASE)
     discovery_mining.run()
+
+    # Popular Garden&Plants
+    admin_config_gm = AdminConfig()
+    admin_config_gm.REBROADCAST_NIP89 = rebroadcast_NIP89
+    admin_config_gm.REBROADCAST_NIP65_RELAY_LIST = rebroadcast_NIP65_Relay_List
+    admin_config_gm.UPDATE_PROFILE = update_profile
+    # admin_config_gm.DELETE_NIP89 = True
+    # admin_config_gm.PRIVKEY = ""
+    # admin_config_gm.EVENTID = "ff28be59708ee597c7010fd43a7e649e1ab51da491266ca82a84177e0007e4d6"
+    # admin_config_gm.POW = True
+    options_gm = {
+        "search_list": [" gm ", "gm.", " gfm ", " gfm.", "gm\n", "gm \n", "gfm\n", "gm!", "gm http", "gm\nhttp"],
+        "avoid_list": ["porn"],
+        "db_name": "db/nostr_recent_notes.db",
+        "db_since": 16 * 60 * 60,  # 12h since gmt
+        "personalized": False,
+        "logger": False}
+
+    image = "https://image.nostr.build/a27e576de988e125fa5e7b8ed9dd01b70c360967e8d73532dfdd823c76dfdd3e.jpg"
+    description = "I show today's best GM notes."
+    custom_processing_msg = ["GM fren."]
+    update_db = False
+    cost = 0
+    discovery_gm = build_example_topic("Popular GMs", "discovery_content_gm",
+                                           admin_config_gm, options_gm,
+                                           image=image,
+                                           description=description,
+                                           update_rate=global_update_rate,
+                                           cost=cost,
+                                           processing_msg=custom_processing_msg,
+                                           update_db=update_db,
+                                           database=DATABASE)
+    discovery_gm.run()
+
+
+
 
     # Popular Animals (Fluffy frens)
     admin_config_animals = AdminConfig()
@@ -1065,9 +1151,42 @@ def playground():
                                                           update_db=update_db)
     discovery_one_per_follow.run()
 
+    # Popular Tweets 
+    admin_config = AdminConfig()
+    admin_config.REBROADCAST_NIP89 = rebroadcast_NIP89
+    admin_config.REBROADCAST_NIP65_RELAY_LIST = rebroadcast_NIP65_Relay_List
+    admin_config.UPDATE_PROFILE = update_profile
+
+    options = {
+        "db_name": "db/nostr_recent_notes.db",
+        "db_since": 24 * 60 * 60 * 4,  # 48h since gmt,
+        "personalized": False,
+        "logger": False}
+
+    image = "https://image.nostr.build/53536b3eccb03fdb127849b79f85b0b6ecb241d12068b65f52afe4a4650d5318.jpg"
+    description = "I show popular notes with < 210 symbols"
+
+    custom_processing_msg = ["Tweets are short notes"]
+    cost = 0
+    update_db = False  # we use the DB scheduler above for a shared database. Or don't use it and let the DVM manage it
+    discovery_tweets = build_example_tweets("Popular Tweets",
+                                            "discovery_content_tweets",
+                                            admin_config, options,
+                                            image=image,
+                                            description=description,
+                                            update_rate=global_update_rate,
+                                            cost=cost,
+                                            processing_msg=custom_processing_msg,
+                                            update_db=update_db,
+                                            database=DATABASE)
+
+    discovery_tweets.run()
+    
+    
+
     # Popular Global
     admin_config_global_popular = AdminConfig()
-    admin_config_global_popular.REBROADCAST_NIP89 = rebroadcast_NIP89
+    admin_config_global_popular.REBROADCAST_NIP89 = True
     admin_config_global_popular.REBROADCAST_NIP65_RELAY_LIST = rebroadcast_NIP65_Relay_List
     admin_config_global_popular.UPDATE_PROFILE = update_profile
     # admin_config_global_popular.DELETE_NIP89 = True

@@ -20,7 +20,7 @@ import {
 import store from '../store';
 import miniToastr from "mini-toastr";
 import {onMounted, ref} from "vue";
-import {get_user_infos, hasActiveSubscription, sleep} from "../components/helper/Helper.vue"
+import {get_user_infos, hasActiveSubscription, sleep, get_main_relays} from "../components/helper/Helper.vue"
 import {createBolt11Lud16, zap, zaprequest} from "../components/helper/Zap.vue"
 import {webln} from "@getalby/sdk";
 
@@ -500,7 +500,7 @@ async function addAllContentDVMs() {
         result: [],
         name: el.name,
         about: el.about,
-        image: el.image,
+        image: el.picture,
         amount: el.amount,
         supportsEncryption: el.supportsEncryption,
         acceptsNutZaps: el.acceptsNutZaps,
@@ -581,7 +581,7 @@ async function addDVM(event) {
     if (JSON.parse(el.event).pubkey === event.author.toHex()) {
       jsonentry.name = el.name
       jsonentry.about = el.about
-      jsonentry.image = el.image
+      jsonentry.image = el.picture
       jsonentry.lud16 = el.lud16
       jsonentry.supportsEncryption = el.supportsEncryption
       jsonentry.acceptsNutZaps = el.acceptsNutZaps
@@ -946,11 +946,22 @@ async function unfollow_all(results) {
   let limits = RelayLimits.disable()
   let relayopts = new Options().relayLimits(limits);
   let dbclient = new ClientBuilder().signer(signer).opts(relayopts).build()
-  await dbclient.addRelay("wss://relay.damus.io");
+  let publicKey = store.state.pubkey
+
+  for (let relay in store.state.relays){
+      await dbclient.addRelay(relay);
+  }
+
+  let relays = await get_main_relays(publicKey, dbclient)
+    for (let relay in relays){
+      console.log(relay)
+      await dbclient.addRelay(relay);
+  }
+
+
   await dbclient.connect()
   let found = false
   let element
-  let publicKey = store.state.pubkey
   console.log(publicKey.toHex())
   let followers_filter = new Filter().author(publicKey).kind(3).limit(1)
   let followers = await dbclient.getEventsOf([followers_filter], Duration.fromSecs(5))
@@ -1025,12 +1036,26 @@ async function unfollow(result) {
   let limits = RelayLimits.disable()
   let relayopts = new Options().relayLimits(limits);
   let dbclient = new ClientBuilder().signer(signer).opts(relayopts).build()
-  await dbclient.addRelay("wss://relay.damus.io");
+  let publicKey = store.state.pubkey
+
+  console.log("hello")
+  for (let relay of store.state.relays){
+      await dbclient.addRelay(relay);
+  }
+    console.log("hello2")
+
+
+   let relays = await get_main_relays(publicKey, dbclient)
+    for (let relay in relays){
+      console.log(relay)
+      await dbclient.addRelay(relay);
+  }
+
+
   await dbclient.connect()
-  console.log(result.authorid)
   let found = false
   let element
-  let publicKey = store.state.pubkey
+
   console.log(publicKey.toHex())
   let followers_filter = new Filter().author(publicKey).kind(3).limit(1)
   let followers = await dbclient.getEventsOf([followers_filter], Duration.fromSecs(5))

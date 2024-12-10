@@ -51,6 +51,7 @@ def build_sd35(name, identifier, announce):
     dvm_config.AVOID_OUTBOX_RELAY_LIST = AVOID_OUTBOX_RELAY_LIST
     dvm_config.SYNC_DB_RELAY_LIST = SYNC_DB_RELAY_LIST
     dvm_config.RELAY_LIST = RELAY_LIST
+    dvm_config.PROVIDE_INVOICE = False
     profit_in_sats = 10
     dvm_config.FIX_COST = int(((4.0 / (get_price_per_sat("USD") * 100)) + profit_in_sats))
     nip89info = {
@@ -77,6 +78,7 @@ def build_sd35(name, identifier, announce):
     aconfig = AdminConfig()
     aconfig.REBROADCAST_NIP89 = announce  # We add an optional AdminConfig for this one, and tell the dvm to rebroadcast its NIP89
     aconfig.REBROADCAST_NIP65_RELAY_LIST = announce
+    aconfig.UPDATE_PROFILE = announce
     aconfig.LUD16 = dvm_config.LN_ADDRESS
     aconfig.PRIVKEY = dvm_config.PRIVATE_KEY
     aconfig.MELT_ON_STARTUP = False # set this to true to melt cashu tokens to our ln address on startup
@@ -93,12 +95,15 @@ def build_dalle(name, identifier, announce):
     admin_config.LUD16 = dvm_config.LN_ADDRESS
     admin_config.REBROADCAST_NIP89 = announce
     admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
+    admin_config.UPDATE_PROFILE = announce
+
     dvm_config.NEW_USER_BALANCE = 0
     dvm_config.USE_OWN_VENV = False
     dvm_config.AVOID_OUTBOX_RELAY_LIST = AVOID_OUTBOX_RELAY_LIST
     dvm_config.SYNC_DB_RELAY_LIST = SYNC_DB_RELAY_LIST
     dvm_config.RELAY_LIST = RELAY_LIST
     profit_in_sats = 10
+    dvm_config.PROVIDE_INVOICE = False
     dvm_config.FIX_COST = int(((4.0 / (get_price_per_sat("USD") * 100)) + profit_in_sats))
 
 
@@ -130,10 +135,12 @@ def build_svd(name, identifier, announce):
     dvm_config.AVOID_OUTBOX_RELAY_LIST = AVOID_OUTBOX_RELAY_LIST
     dvm_config.SYNC_DB_RELAY_LIST = SYNC_DB_RELAY_LIST
     dvm_config.RELAY_LIST = RELAY_LIST
+    dvm_config.PROVIDE_INVOICE = False
     admin_config = AdminConfig()
     admin_config.LUD16 = dvm_config.LN_ADDRESS
     admin_config.REBROADCAST_NIP89 = announce
     admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
+    admin_config.UPDATE_PROFILE = announce
     profit_in_sats = 10
     cost_in_cent = 4.0
     dvm_config.FIX_COST = int(((cost_in_cent / (get_price_per_sat("USD") * 100)) + profit_in_sats))
@@ -165,6 +172,7 @@ def build_media_converter(name, identifier, announce):
     admin_config.LUD16 = dvm_config.LN_ADDRESS
     admin_config.REBROADCAST_NIP89 = announce
     admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
+    admin_config.UPDATE_PROFILE = announce
     nip89info = {
     "name": name,
     "picture": "https://cdn.nostr.build/i/a177be1159da5aad8396a1188f686728d55647d3a7371549584daf2b5e50eec9.jpg",
@@ -304,6 +312,7 @@ def build_replicate(name, identifier, model,  announce):
     dvm_config.AVOID_OUTBOX_RELAY_LIST = AVOID_OUTBOX_RELAY_LIST
     dvm_config.SYNC_DB_RELAY_LIST = SYNC_DB_RELAY_LIST
     dvm_config.RELAY_LIST = RELAY_LIST
+    dvm_config.PROVIDE_INVOICE = False
     admin_config = AdminConfig()
     admin_config.LUD16 = dvm_config.LN_ADDRESS
     admin_config.REBROADCAST_NIP89 = announce
@@ -315,7 +324,7 @@ def build_replicate(name, identifier, model,  announce):
     nip89info = {
         "name": name,
         "picture": "https://i.nostr.build/qnoBIN4jSkfF8IHk.png",
-        "about": "I use Replicate to run StableDiffusion XL",
+        "about": "I make images with StableDiffusion XL",
         "supportsEncryption": True,
         "acceptsNutZaps": False,
         "nip90Params": {
@@ -341,10 +350,13 @@ def build_replicate_recraft(name, identifier,  announce):
     dvm_config.AVOID_OUTBOX_RELAY_LIST = AVOID_OUTBOX_RELAY_LIST
     dvm_config.SYNC_DB_RELAY_LIST = SYNC_DB_RELAY_LIST
     dvm_config.RELAY_LIST = RELAY_LIST
+    dvm_config.PROVIDE_INVOICE = False
     admin_config = AdminConfig()
     admin_config.LUD16 = dvm_config.LN_ADDRESS
     admin_config.REBROADCAST_NIP89 = announce
     admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
+    admin_config.UPDATE_PROFILE = announce
+
 
     profit_in_sats = 10
     dvm_config.FIX_COST = int(((4.0 / (get_price_per_sat("USD") * 100)) + profit_in_sats))
@@ -352,7 +364,7 @@ def build_replicate_recraft(name, identifier,  announce):
     nip89info = {
         "name": name,
         "picture": "https://i.nostr.build/jSbrXvYglXCzSeAc.jpg",
-        "about": "I use Replicate to run Recraft v3",
+        "about": "I produce images with Recraft v3",
         "supportsEncryption": True,
         "acceptsNutZaps": False,
         "nip90Params": {
@@ -376,10 +388,12 @@ def build_replicate_fluxpro(name, identifier, announce):
     dvm_config.AVOID_OUTBOX_RELAY_LIST = AVOID_OUTBOX_RELAY_LIST
     dvm_config.SYNC_DB_RELAY_LIST = SYNC_DB_RELAY_LIST
     dvm_config.RELAY_LIST = RELAY_LIST
+    dvm_config.PROVIDE_INVOICE = False
     admin_config = AdminConfig()
     admin_config.LUD16 = dvm_config.LN_ADDRESS
     admin_config.REBROADCAST_NIP89 = announce
     admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
+    admin_config.UPDATE_PROFILE = announce
 
     profit_in_sats = 10
     dvm_config.FIX_COST = int(((4.0 / (get_price_per_sat("USD") * 100)) + profit_in_sats))
@@ -387,13 +401,13 @@ def build_replicate_fluxpro(name, identifier, announce):
     nip89info = {
         "name": name,
         "picture": "https://i.nostr.build/AQTujqzVmLxLmG16.jpg",
-        "about": "I use Replicate to FluxPro 1.1.",
+        "about": "I provide images with FluxPro 1.1",
         "supportsEncryption": True,
         "acceptsNutZaps": False,
         "nip90Params": {
             "size": {
                 "required": False,
-                "values": ["5:4"]
+                "values": ["4:5"]
             }
         }
     }
@@ -441,6 +455,8 @@ def playground(announce=False):
         recraftreplicate = build_replicate_recraft("Recraft v3", "recraftsvg", announce)
         bot_config.SUPPORTED_DVMS.append(recraftreplicate)
         recraftreplicate.run()
+
+
 
 
     media_bringer = build_media_converter("Nostr AI DVM Media Converter", "media_converter", announce)
