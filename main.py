@@ -21,8 +21,8 @@ async def configure_and_start_DVM():
         # ------------------- ADMIN CONFIG
         admin_config = AdminConfig()
         admin_config.PRIVKEY = os.getenv("ADMIN_PRIVATE_KEY")
-        admin_config.REBROADCAST_NIP89 = True
-        admin_config.REBROADCAST_NIP65_RELAY_LIST = True
+        admin_config.REBROADCAST_NIP89 = False
+        admin_config.REBROADCAST_NIP65_RELAY_LIST = False
         admin_config.UPDATE_PROFILE = True
         admin_config.LUD16 = 'five@npub.cash'
 
