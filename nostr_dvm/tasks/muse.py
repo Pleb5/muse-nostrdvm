@@ -1,9 +1,20 @@
+import typing
+import os
 from itertools import islice
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from nostr_sdk import Options, PublicKey, RelayFilteringMode, RelayLimits, Timestamp, Tag, Keys, SecretKey, NostrSigner, NostrDatabase, \
-    ClientBuilder, Filter, SyncOptions, SyncDirection, init_logger, LogLevel, Kind
+import openai
+from nostr_dvm.utils.openai_utils import fetch_classification_response
+
+from nostr_sdk import Event, Options, PublicKey,\
+                    RelayFilteringMode,\
+                    RelayLimits, Timestamp,\
+                    Tag, Keys, SecretKey,\
+                    NostrSigner, ClientBuilder,\
+                    Filter, SyncOptions,\
+                    SyncDirection, init_logger,\
+                    LogLevel, Kind
 
 from nostr_dvm.interfaces.dvmtaskinterface import DVMTaskInterface
 from nostr_dvm.utils import definitions
@@ -18,17 +29,22 @@ from nostr_dvm.utils.output_utils import post_process_list_to_events
 from nostr_dvm.utils.wot_utils import build_wot_network
 
 """
-This File contains a Module to discover popular notes
-Accepted Inputs: none
-Outputs: A list of events 
+Discover nostr events relevant to freelancing: Git issues and their replies 
+and kind1 notes filtered for people seeking help
+Accepted Inputs: NONE (but later it could be personalized with interests of users)
+Outputs: A list of events: Kind 1, Kind 1621(Git issues), Kind 1622 (Git issue replies)
 Params:  None
 """
 
 
-class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
+class MuseDVM(DVMTaskInterface):
     KIND: Kind = EventDefinitions.KIND_NIP90_CONTENT_DISCOVERY
     TASK: str = "discover-content"
     FIX_COST: float = 0
+    openai_client: openai.AsyncOpenAI
+    wot_file_path: str
+    wot_keys:typing.List[PublicKey] = []
+    posts_file_path: str
     dvm_config: DVMConfig
     request_form = None
     last_schedule: int = 0
@@ -36,11 +52,10 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
     db_name: str
     result = ""
 
-    # This has to be defined to avoid the super class 
-    # __init__ to be invoked implicitly (which calls asyncio operations unnecessarily)
     def __init__(
         self,
         name,
+        openai_client: openai.AsyncOpenAI,
         dvm_config: DVMConfig,
         nip89config: NIP89Config,
         nip88config: NIP88Config|None = None,
@@ -50,11 +65,27 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
     ):
         self.name = name
         self.NAME = name
+        self.openai_client = openai_client
         self.dvm_config = dvm_config
         self.dvm_config.NIP89 = nip89config
         self.dvm_config.NIP88 = nip88config
         self.dvm_config.SUPPORTED_DVMS = [self]
         self.admin_config = admin_config
+
+        wot_file_path = os.getenv("WOT_FILE_PATH")
+
+        if wot_file_path is None:
+            raise EnvironmentError("Could not load WOT file path!")
+
+        self.wot_file_path = wot_file_path
+
+        posts_file_path = os.getenv("PROCESSED_POSTS_PATH")
+
+        if posts_file_path is None:
+            raise EnvironmentError("Could not load PROCESSED_POSTS_PATH path!")
+
+        self.posts_file_path = posts_file_path
+
 
         print(f"Options:{options}")
 
@@ -181,14 +212,12 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
         since = Timestamp.from_secs(timestamp_since)
 
         filter1 = Filter().kinds(
-                [
-                    definitions.EventDefinitions.KIND_NOTE,
-                    definitions.EventDefinitions.KIND_GIT_ISSUE,
-                    definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
-                ]
-                ).since(since)
+            [
+                definitions.EventDefinitions.KIND_GIT_ISSUE,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
+            ]
+        ).since(since)
 
-        print(f"DB in calc result: {self.database}")
         events = await self.database.query([filter1])
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print(
@@ -196,55 +225,50 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
                 + str(len(events.to_vec())) + " Events"
             )
 
-        kind1_events_to_filter = []
-
-        ns.finallist = {}
+        ns.git_events_list = {}
 
         for event in events.to_vec():
-            if event.created_at().as_secs() > timestamp_since:
-                if event.kind == definitions.EventDefinitions.KIND_NOTE:
-                    # push kind1 notes for inference and preprocess
-                    kind1_events_to_filter.append(
-                        {event.id().to_hex()[:8] : clean_text(event.content)}
-                    )
-                else:
-                    ns.finallist[event.id().to_hex()] = event.created_at
+            ns.git_events_list[event.id().to_hex()] = event.created_at().as_secs()
 
-        if len(ns.finallist) == 0:
-            return self.result
-
-        # TODO: Use openai api to filter for relevant posts
-        print(f"First 50 of the kind1 events to process:\
-            {kind1_events_to_filter[:50]}"
-        )
-
-        batch_size = 500
-        print(f"Starting processing with batch size: {batch_size}")
-
-        for i in range(0, len(kind1_events_to_filter), batch_size):
-            batch = kind1_events_to_filter[i:i+batch_size]
-            # TODO: Send prompt with 
-
-
-            print(f"Processed events! Result:{processing_result}")
-        result_list = []
-         
-        finallist_sorted = sorted(
-            ns.finallist.items(),
+        git_events_list_sorted = sorted(
+            ns.git_events_list.items(),
             key=lambda x: x[1],
             reverse=True
-        )[:int(options["max_results"])]
+        )
 
-        for entry in finallist_sorted:
-            # print(EventId.parse(entry[0]).to_bech32() + "/" \
-            # + EventId.parse(entry[0]).to_hex() + ": " + str(entry[1]))
+        all_processed_kind1s = []
+
+        # Add already processed posts to result which 
+        with open(self.posts_file_path, 'w') as file:
+            pass 
+
+        with open(self.posts_file_path, 'r') as file:
+            lines = file.readlines()
+        for line in lines:
+            post_id, created_at = line.split(":", 1)
+            try:
+                if int(created_at) >= timestamp_since:
+                    all_processed_kind1s.append(post_id)
+            except ValueError:
+                print(f"Could not convert event timestamp to int: {post_id}:{created_at}")
+                continue
+
+        # Prepend kind1s in the front and take as many of them as the options allow
+        final_list = (all_processed_kind1s + git_events_list_sorted)[:int(options["max_results"])]
+
+        result_list = []
+
+        for entry in final_list:
             e_tag = Tag.parse(["e", entry[0]])
             result_list.append(e_tag.as_vec())
+
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print("[" + self.dvm_config.NIP89.NAME + "] Filtered " + str(
                 len(result_list)) + " fitting events.")
         # await cli.shutdown()
         return json.dumps(result_list)
+
+
 
     async def post_process(self, result, event):
         """Overwrite the interface function to return a \
@@ -282,7 +306,7 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
                 result_event = await self.process(self.request_form)
 
                 try:
-                    with open("test_result_" + timestamp \
+                    with open("test_result_muse" + timestamp \
                     + '.txt', 'w', encoding="utf8") as output_file:
 
                         output_file.write(result_event)
@@ -303,18 +327,23 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
             )
 
         try:
-            print("Start Sync DB...")
+            print("Start Syncing DB...")
+
             relaylimits = RelayLimits.disable()
             opts = (Options().relay_limits(relaylimits))
             if self.dvm_config.WOT_FILTERING:
                 opts = opts.filtering_mode(RelayFilteringMode.WHITELIST)
+                 
+            # opts.gossip(True)
 
             sk = SecretKey.from_hex(self.dvm_config.PRIVATE_KEY)
             keys = Keys.parse(sk.to_hex())
 
-            cli = ClientBuilder().signer(
-                NostrSigner.keys(keys)
-            ).database(self.database).build()
+            cli = ClientBuilder().signer(NostrSigner.keys(keys))\
+                                .database(self.database)\
+                                .opts(opts)\
+                                .build()
+
 
             for relay in self.dvm_config.SYNC_DB_RELAY_LIST:
                 await cli.add_relay(relay)
@@ -322,46 +351,64 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
             await cli.connect()
             print("Client connected.")
 
-            print("WOT Filtering: " + str(self.dvm_config.WOT_FILTERING))
 
-            if self.dvm_config.WOT_FILTERING and self.wot_counter == 0:
-                print("Calculating WOT for " + str(self.dvm_config.WOT_BASED_ON_NPUBS))
-                filtering = cli.filtering()
+            if self.wot_outdated():
+                self.wot_keys = await self.update_wot()
+                print(
+                    f"""public keys just calculated:
+                    \n{self.wot_keys[:10]}...({len(self.wot_keys)})"""
+                )
+            else:
+                # MUST exist
+                with open(self.wot_file_path, 'r') as wot_file:
+                    lines = wot_file.readlines()
+                    for line in lines:
+                        pubkey_hex = line.strip()
+                        try:
+                            self.wot_keys.append(PublicKey.parse(pubkey_hex))
+                        except Exception as e:
+                            print(e)
+                            continue
 
-                index_map, G = await build_wot_network(
-                    self.dvm_config.WOT_BASED_ON_NPUBS,
-                    depth=self.dvm_config.WOT_DEPTH,
-                    max_batch=500,
-                    max_time_request=10,
-                    dvm_config=self.dvm_config
+                print(
+                    f"""public keys read from file:
+                    \n{self.wot_keys[:10]}...({len(self.wot_keys)})"""
                 )
 
-                # Do we actually need pagerank here?
-                # print('computing global pagerank...')
-                # tic = time.time()
-                # p_G = nx.pagerank(G, tol=1e-12)
-                # print("network after pagerank: " + str(len(p_G)))
 
-                wot_keys = []
-                for item in islice(G, len(G)):
-                    key = next(
-                        (
-                            PublicKey.parse(pubkey) for pubkey,
-                            id in index_map.items() if id == item
-                        ),
-                        None
-                    )
+            await cli.filtering().add_public_keys(self.wot_keys)
 
-                    wot_keys.append(key)
+            print(f'WoT filter size:{len(self.wot_keys)}')
 
-                # toc = time.time()
-                # print(f'finished in {toc - tic} seconds')
-                await filtering.add_public_keys(wot_keys)
+            # Have to add relays explicitly defined in Announced Git repos
+            # in order to get the relevant issues and their replies
+            git_repo_filter = Filter().kind(
+                definitions.EventDefinitions.KIND_GIT_REPOSITORY
+            )
 
-            self.wot_counter += 1
-            # only calculate wot every 50th call
-            if self.wot_counter > 49:
-                self.wot_counter = 0
+            repo_events_struct = await cli.fetch_events(
+                [git_repo_filter], timedelta(3)
+            )
+            repo_events: typing.List[Event] = repo_events_struct.to_vec()
+
+            relay_urls_to_add = []
+            for event in repo_events:
+                print(f"repo event: {event}")
+
+                for tag in event.tags().to_vec():
+                    tag_array = tag.as_vec()
+                    if tag_array[0] == "relays":
+                        relay_urls_to_add = tag_array[1:]
+                        break
+
+            print(f"Adding relays from repo events: {relay_urls_to_add}")
+            for url in relay_urls_to_add:
+                await cli.add_relay(url)
+
+            await cli.connect_with_timeout(timedelta(2))
+
+            relays = await cli.relays()
+            print(f"Connected relays: {relays}")
 
             timestamp_since = Timestamp.now().as_secs() - self.db_since
             since = Timestamp.from_secs(timestamp_since)
@@ -369,11 +416,10 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
             filter1 = Filter().kinds(
                 [
                     definitions.EventDefinitions.KIND_NOTE,
-                    definitions.EventDefinitions.KIND_REACTION,
-                    definitions.EventDefinitions.KIND_ZAP
+                    definitions.EventDefinitions.KIND_GIT_ISSUE,
+                    definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
                 ]).since(since)
 
-            # filter = Filter().author(keys.public_key())
             if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
                 print(
                     "[" + self.dvm_config.NIP89.NAME
@@ -386,12 +432,20 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
             await cli.sync(filter1, dbopts)
 
             # Clear old events so db doesn't get too full.
-            await cli.database().delete(Filter().until(Timestamp.from_secs(
-                Timestamp.now().as_secs() - self.db_since))
-            )  
+            await cli.database()\
+                    .delete(Filter()\
+                        .until(Timestamp.from_secs(
+                                Timestamp.now().as_secs() - self.db_since
+                            )
+                        )
+                    )  
             print("Syncing complete, shutting down client...")
 
             await cli.shutdown()
+
+            # Run inference on synced Kind1 events and save relevant ones in text file
+            await self.filter_and_save_kind1_notes(since)
+
 
             if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
                 print("[" + self.dvm_config.NIP89.NAME
@@ -402,19 +456,133 @@ class TestDicoverContentCurrentlyPopular(DVMTaskInterface):
         except Exception as e:
             print(e)
 
+    def wot_outdated(self) -> bool:
+        # Update wot every 14 days
+        elapsed_time = timedelta(days=14)
 
-async def build_test(
+
+        if not os.path.exists(self.wot_file_path):
+            print("WOT file does not exist, no wot yet")
+            return True
+
+        mod_time = os.path.getmtime(self.wot_file_path)
+        last_mod_date = datetime.fromtimestamp(mod_time)
+
+        current_time = datetime.now()
+        time_difference = current_time - last_mod_date
+
+        print(f"File last modified: {last_mod_date}")
+        print(f"Time elapsed since last modification: {time_difference}")
+
+        if time_difference > elapsed_time:
+            return True
+        else:
+            return False
+
+
+    async def update_wot(self) -> typing.List[PublicKey]:
+        try:
+            print(
+                "Calculating WOT for " \
+                + str(self.dvm_config.WOT_BASED_ON_NPUBS)
+            )
+
+            index_map, G = await build_wot_network(
+                self.dvm_config.WOT_BASED_ON_NPUBS,
+                depth=self.dvm_config.WOT_DEPTH,
+                max_batch=500,
+                max_time_request=10,
+                dvm_config=self.dvm_config
+            )
+
+            wot_keys = []
+            for item in islice(G, len(G)):
+                key = next(
+                    (
+                        PublicKey.parse(pubkey) for pubkey,
+                        id in index_map.items() if id == item
+                    ),
+                    None
+                )
+
+                wot_keys.append(key)
+
+            with open(self.wot_file_path, 'w') as wot_file: 
+                for index, key in enumerate(wot_keys, start=0):
+                    wot_file.write(key.to_hex())
+                    if index < len(wot_keys) - 1:
+                        wot_file.write('\n')
+
+            return wot_keys
+        except Exception as e:
+            print(e)
+            return []
+
+    async def filter_and_save_kind1_notes(self, since):
+        kind1_filter = Filter().kind(
+            definitions.EventDefinitions.KIND_NOTE
+        ).since(since)
+
+        events = await self.database.query([kind1_filter])
+
+        kind1_events = events.to_vec()
+
+        print(f"First 50 of the kind1 events to process:\
+            {kind1_events[:50]}"
+        )
+
+        # 4o-mini can handle 128K tokens per api request. Should handle 500 
+        # posts easily including system message and output tokens
+        # Posts are truncated to a max of 300 chars for safety in clean_text
+        batch_size = 500
+        print(f"Starting kind1 processing with batch size: {batch_size}")
+        all_processed_kind1s = []
+        for i in range(0, len(kind1_events), batch_size):
+            batch = kind1_events[i:i+batch_size]
+
+            preprocessed_kind1s = ""
+            for event in batch:
+                preprocessed_kind1s += \
+                    f"""{event.id().to_hex()[:4]} : {clean_text(event.content())}\n"""
+                        
+            print(f"Sending cleaned posts for inference: {preprocessed_kind1s}")
+            processed_kind1s = await fetch_classification_response(
+                self.openai_client, preprocessed_kind1s
+            )
+
+            print(f"Processed events! Result:{processed_kind1s}")
+
+            for index, line in enumerate(processed_kind1s):
+                post_id, category = line.split(":", 1)
+                with open(self.posts_file_path, 'a') as file:
+                    for event in batch:
+                        if post_id in event.id().to_hex() and '1' in category:
+                            file.write(f"{event.id()}:{event.created_at().as_secs()}")
+                            if index < len(processed_kind1s) - 1:
+                                file.write("\n")
+
+                            all_processed_kind1s.append(event)
+
+
+        print(f'The overall result of the kind1 filtering\
+            selected these events: {all_processed_kind1s}')
+
+
+
+async def build_muse(
     name,
+    openai_client,
     dvm_config,
     nip89config,
     nip88config,
     admin_config,
     options,
 ):
-    print(f"Options in build_test:{options}")
+    print(f"Options in build_muse:{options}")
 
-    dvm = TestDicoverContentCurrentlyPopular(
+    dvm = MuseDVM(
         name=name,
+        openai_client = openai_client,
         dvm_config=dvm_config,
         nip89config=nip89config,
         nip88config=nip88config,

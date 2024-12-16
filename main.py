@@ -1,22 +1,21 @@
-from datetime import datetime
 import os
 import asyncio
 import json
 from pathlib import Path
 import dotenv
+import openai
 
-from nostr_dvm.interfaces.dvmtaskinterface import DVMTaskInterface, process_venv
-from nostr_dvm.tasks.content_discovery_update_db_only import DicoverContentDBUpdateScheduler
-from nostr_dvm.tasks.test_content_discovery_current_popular_notes import TestDicoverContentCurrentlyPopular, build_test
+from nostr_dvm.tasks.muse import build_muse
 from nostr_dvm.utils.admin_utils import AdminConfig
 from nostr_dvm.utils.definitions import EventDefinitions
-from nostr_dvm.utils.dvmconfig import DVMConfig, build_default_config
-from nostr_dvm.utils.nip89_utils import NIP89Config, check_and_set_d_tag, create_amount_tag
-from nostr_sdk import Keys, Kind, LogLevel
+from nostr_dvm.utils.dvmconfig import DVMConfig
+from nostr_dvm.utils.nip89_utils import NIP89Config,\
+            check_and_set_d_tag, create_amount_tag
+from nostr_sdk import Keys, LogLevel
 
 
 
-async def configure_and_start_DVM():
+async def configure_and_start_DVM(openai_client: openai.AsyncOpenAI):
     try:
         # ------------------- ADMIN CONFIG
         admin_config = AdminConfig()
@@ -69,20 +68,20 @@ async def configure_and_start_DVM():
         dvm_config.RELAY_TIMEOUT = 5
         dvm_config.RELAY_LONG_TIMEOUT = 30
 
-        dvm_config.CUSTOM_PROCESSING_MESSAGE = "TEST Processing request..."
+        dvm_config.CUSTOM_PROCESSING_MESSAGE = "Delivering Your inspiration in a moment..."
 
 
         # ------------------- NIP89 CONFIG
-        name = "Five Test Content Discovery DVM"
+        name = "Muse DVM"
         image = "https://i.nostr.build/yq7a5.jpg"
-        identifier = "five_test_content_discovery" 
+        identifier = "muse_test_content_discovery" 
         cost = 0
 
         # Add NIP89
         nip89info = {
                 "name": name,
                 "picture": image,
-                "about": "TEST I show notes that are currently popular",
+                "about": "TEST Inspirational Feed for Freelancers",
                 "lud16": dvm_config.LN_ADDRESS,
                 "supportsEncryption": False,
                 "acceptsNutZaps": False,
@@ -112,14 +111,15 @@ async def configure_and_start_DVM():
 
         options = {
             "max_results": 200,
-            "db_name": "db/test_content_discovery", 
-            "db_since": 3600 * 24 * 30, # last 30 days
+            "db_name": "db/museDVM", 
+            "db_since": 3600 * 24 * 21, # last 21 days
             "max_db_size" : 1024,
-            "personalized": False
+            # "personalized": False
         }
 
-        dvm = await build_test(
+        dvm = await build_muse(
             name,
+            openai_client,
             dvm_config,
             nip89config,
             None,
@@ -142,7 +142,18 @@ if __name__ == '__main__':
     if env_path.is_file():
         print(f'loading environment from {env_path.resolve()}')
         dotenv.load_dotenv(env_path, verbose=True, override=True)
+
+
+        api_key = os.getenv("OPENAI_API_KEY")
+
+        if api_key:
+            print("OpenAI api key loaded!")
+        else:
+            print("Could not load api key!")
+            raise EnvironmentError("Could not load openai api key!")
+
+        openai_client = openai.AsyncOpenAI(api_key = api_key)
     else:
         raise FileNotFoundError(f'.env file not found at {env_path} ')
 
-    asyncio.run(configure_and_start_DVM())
+    asyncio.run(configure_and_start_DVM(openai_client))
