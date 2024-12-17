@@ -112,7 +112,7 @@ async def configure_and_start_DVM(openai_client: openai.AsyncOpenAI):
         options = {
             "max_results": 200,
             "db_name": "db/museDVM", 
-            "db_since": 3600 * 24 * 21, # last 21 days
+            "db_since": 3600 * 24 * 7, # last 21 days
             "max_db_size" : 1024,
             # "personalized": False
         }

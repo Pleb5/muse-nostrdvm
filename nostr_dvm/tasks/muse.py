@@ -7,14 +7,21 @@ from datetime import datetime, timedelta
 import openai
 from nostr_dvm.utils.openai_utils import fetch_classification_response
 
-from nostr_sdk import Event, Options, PublicKey,\
+from nostr_sdk import Event,\
+                    Options,\
+                    PublicKey,\
                     RelayFilteringMode,\
-                    RelayLimits, Timestamp,\
-                    Tag, Keys, SecretKey,\
-                    NostrSigner, ClientBuilder,\
-                    Filter, SyncOptions,\
-                    SyncDirection, init_logger,\
-                    LogLevel, Kind
+                    RelayLimits,\
+                    Timestamp,\
+                    Tag,\
+                    Keys,\
+                    SecretKey,\
+                    NostrSigner,\
+                    ClientBuilder,\
+                    Filter,\
+                    init_logger,\
+                    LogLevel,\
+                    Kind
 
 from nostr_dvm.interfaces.dvmtaskinterface import DVMTaskInterface
 from nostr_dvm.utils import definitions
@@ -49,6 +56,7 @@ class MuseDVM(DVMTaskInterface):
     request_form = None
     last_schedule: int = 0
     db_since:int
+    query_since: Timestamp
     db_name: str
     result = ""
 
@@ -119,6 +127,10 @@ class MuseDVM(DVMTaskInterface):
         if self.db_since is None:
             raise ValueError("option 'db_since' \
             is None or the key does not exist. Add valid option!") 
+
+        self.query_since = Timestamp.from_secs(
+            Timestamp.now().as_secs() - self.db_since
+        )
 
         self.max_db_size = self.options.get("max_db_size")
 
@@ -222,7 +234,7 @@ class MuseDVM(DVMTaskInterface):
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print(
                 "[" + self.dvm_config.NIP89.NAME + "] Considering "\
-                + str(len(events.to_vec())) + " Events"
+                + str(len(events.to_vec())) + " Git issue events"
             )
 
         ns.git_events_list = {}
@@ -239,33 +251,44 @@ class MuseDVM(DVMTaskInterface):
         all_processed_kind1s = []
 
         # Add already processed posts to result which 
-        with open(self.posts_file_path, 'w') as file:
+        with open(self.posts_file_path, 'a') as file:
             pass 
 
         with open(self.posts_file_path, 'r') as file:
             lines = file.readlines()
         for line in lines:
+            print(f"Reading line from saved processed notes file:\n{line}\n")
             post_id, created_at = line.split(":", 1)
             try:
-                if int(created_at) >= timestamp_since:
-                    all_processed_kind1s.append(post_id)
+                if int(created_at.strip()) >= timestamp_since:
+                    all_processed_kind1s.append(post_id.strip())
+                else:
+                    print(f"{created_at} not greater than {timestamp_since}, skip this event...\n")
             except ValueError:
                 print(f"Could not convert event timestamp to int: {post_id}:{created_at}")
                 continue
 
-        # Prepend kind1s in the front and take as many of them as the options allow
-        final_list = (all_processed_kind1s + git_events_list_sorted)[:int(options["max_results"])]
+        print(f"All kind1s parsed from file:\n{all_processed_kind1s}")
 
+        # Prepend kind1s in the front and take as many of them as the options allow
         result_list = []
 
-        for entry in final_list:
+        for event_id in all_processed_kind1s:
+            e_tag = Tag.parse(["e", event_id])
+            result_list.append(e_tag.as_vec())
+
+        for entry in git_events_list_sorted:
             e_tag = Tag.parse(["e", entry[0]])
             result_list.append(e_tag.as_vec())
+
+        result_list = result_list[:int(options["max_results"])]
+
+        print(f"Result list({len(result_list)}):\n{result_list}")
 
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print("[" + self.dvm_config.NIP89.NAME + "] Filtered " + str(
                 len(result_list)) + " fitting events.")
-        # await cli.shutdown()
+
         return json.dumps(result_list)
 
 
@@ -288,10 +311,10 @@ class MuseDVM(DVMTaskInterface):
         if dvm_config.SCHEDULE_UPDATES_SECONDS == 0:
             raise ValueError("Error Schedule update period not set!")
         else:
-            print("Start schedule")
             # initially last_schedule is 0 so this will be true
             if Timestamp.now().as_secs() >= self.last_schedule\
                         + dvm_config.SCHEDULE_UPDATES_SECONDS:
+                print("Start schedule")
 
                 if self.dvm_config.UPDATE_DATABASE:
                     await self.sync_db()
@@ -306,7 +329,7 @@ class MuseDVM(DVMTaskInterface):
                 result_event = await self.process(self.request_form)
 
                 try:
-                    with open("test_result_muse" + timestamp \
+                    with open("test_result_muse_" + timestamp \
                     + '.txt', 'w', encoding="utf8") as output_file:
 
                         output_file.write(result_event)
@@ -345,12 +368,19 @@ class MuseDVM(DVMTaskInterface):
                                 .build()
 
 
+            # Add discovery relays for gossip
             for relay in self.dvm_config.SYNC_DB_RELAY_LIST:
                 await cli.add_relay(relay)
+                # await cli.add_discovery_relay(relay)
 
             await cli.connect()
             print("Client connected.")
 
+
+            self.wot_keys.clear()
+
+            #whitelisting Five (source of web of trust)
+            self.wot_keys.append(PublicKey.parse("d04ecf33a303a59852fdb681ed8b412201ba85d8d2199aec73cb62681d62aa90"))
 
             if self.wot_outdated():
                 self.wot_keys = await self.update_wot()
@@ -393,8 +423,6 @@ class MuseDVM(DVMTaskInterface):
 
             relay_urls_to_add = []
             for event in repo_events:
-                print(f"repo event: {event}")
-
                 for tag in event.tags().to_vec():
                     tag_array = tag.as_vec()
                     if tag_array[0] == "relays":
@@ -405,40 +433,46 @@ class MuseDVM(DVMTaskInterface):
             for url in relay_urls_to_add:
                 await cli.add_relay(url)
 
+            # Do we have to shut client down before this and reconnect?
             await cli.connect_with_timeout(timedelta(2))
 
             relays = await cli.relays()
             print(f"Connected relays: {relays}")
 
-            timestamp_since = Timestamp.now().as_secs() - self.db_since
-            since = Timestamp.from_secs(timestamp_since)
+            print(f"Fetching events since: {self.query_since.to_human_datetime()}")
 
-            filter1 = Filter().kinds(
+            # Copy timestamp and set new anchor date for next fetch
+            since = Timestamp.from_secs(self.query_since.as_secs())
+            self.query_since = Timestamp.now()
+
+            muse_filter = Filter().kinds(
                 [
                     definitions.EventDefinitions.KIND_NOTE,
                     definitions.EventDefinitions.KIND_GIT_ISSUE,
                     definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
                 ]).since(since)
 
-            if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
-                print(
-                    "[" + self.dvm_config.NIP89.NAME
-                    + "] Syncing notes of the last " 
-                    + str(self.db_since)
-                    + " seconds.. this might take a while.."
-                )
+            start_time = datetime.now()
+            events = await cli.fetch_events([muse_filter], timedelta(20))
+            time_difference =  datetime.now() - start_time
+            relays = await cli.relays()
+            print(f"Connected relays after fetch: {relays}")
+            print(f"Fetching events took {time_difference.seconds}secs")
+            notes=[]
+            issues=[]
+            replies=[]
+            for event in events.to_vec():
+                if event.kind() == definitions.EventDefinitions.KIND_NOTE:
+                    notes.append(event)
+                elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE:
+                    issues.append(event)
+                elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY:
+                    replies.append(event)
 
-            dbopts = SyncOptions().direction(SyncDirection.DOWN)
-            await cli.sync(filter1, dbopts)
+            print(f"Number of notes fetched: {len(notes)}\n")
+            print(f"Number of issues fetched: {len(issues)}\n")
+            print(f"Number of issue replies fetched: {len(replies)}\n")
 
-            # Clear old events so db doesn't get too full.
-            await cli.database()\
-                    .delete(Filter()\
-                        .until(Timestamp.from_secs(
-                                Timestamp.now().as_secs() - self.db_since
-                            )
-                        )
-                    )  
             print("Syncing complete, shutting down client...")
 
             await cli.shutdown()
@@ -527,45 +561,73 @@ class MuseDVM(DVMTaskInterface):
 
         kind1_events = events.to_vec()
 
-        print(f"First 50 of the kind1 events to process:\
-            {kind1_events[:50]}"
-        )
+        # 4o-mini can handle 128K tokens per api request. Should handle
+        # 500 posts easily including system message and output tokens
+        # but we will keep it *100* for now, as it delivers better results
 
-        # 4o-mini can handle 128K tokens per api request. Should handle 500 
-        # posts easily including system message and output tokens
         # Posts are truncated to a max of 300 chars for safety in clean_text
-        batch_size = 500
-        print(f"Starting kind1 processing with batch size: {batch_size}")
+        batch_size = 100
+        print(f"Start kind1 processing with batch size: {batch_size}")
         all_processed_kind1s = []
         for i in range(0, len(kind1_events), batch_size):
             batch = kind1_events[i:i+batch_size]
 
             preprocessed_kind1s = ""
-            for event in batch:
+            for index, event in enumerate(batch):
+                cleaned_content = clean_text(event.content())
+                if cleaned_content == "":
+                    continue
+
                 preprocessed_kind1s += \
-                    f"""{event.id().to_hex()[:4]} : {clean_text(event.content())}\n"""
+                    f"""{event.id().to_hex()[:4]}:{cleaned_content}"""
+                if index < len(batch) - 1:
+                    preprocessed_kind1s += ';;;;'
                         
-            print(f"Sending cleaned posts for inference: {preprocessed_kind1s}")
+            print(f"Sending {len(batch)} cleaned posts for inference")
+            print(f"User prompt sample:\n{preprocessed_kind1s[:1000]}\n")
+
+            start_time = datetime.now()
             processed_kind1s = await fetch_classification_response(
                 self.openai_client, preprocessed_kind1s
             )
 
             print(f"Processed events! Result:{processed_kind1s}")
+            time_difference =  datetime.now() - start_time
+            print(f"Processing events took {time_difference.seconds}secs")
 
             for index, line in enumerate(processed_kind1s):
-                post_id, category = line.split(":", 1)
-                with open(self.posts_file_path, 'a') as file:
+                # There can be malformed output from inference, skip those
+                response_info = line.split(":", 1)
+                if len(response_info) != 2:
+                    continue
+
+                post_id = response_info[0]
+                category = response_info[1]
+
+                if '1' in category:
                     for event in batch:
-                        if post_id in event.id().to_hex() and '1' in category:
-                            file.write(f"{event.id()}:{event.created_at().as_secs()}")
-                            if index < len(processed_kind1s) - 1:
-                                file.write("\n")
+                        if post_id == event.id().to_hex()[:4]: 
+                            with open(self.posts_file_path, 'a') as file:
+                                file.write(
+                                f"""{event.id().to_hex()}:{event.created_at().as_secs()}"""
+                                )
+
+                                if index < len(processed_kind1s) - 1:
+                                    file.write("\n")
+
+                            with open('test_kind1_result_content', 'a') as content_file:
+                                content_file.write(
+                                f"""{event.id().to_hex()}:{event.content()}"""
+                                )
+
+                                if index < len(processed_kind1s) - 1:
+                                    content_file.write("\n")
 
                             all_processed_kind1s.append(event)
 
 
         print(f'The overall result of the kind1 filtering\
-            selected these events: {all_processed_kind1s}')
+            selected these events({len(all_processed_kind1s)}): {all_processed_kind1s}')
 
 
 
