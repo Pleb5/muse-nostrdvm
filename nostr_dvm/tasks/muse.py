@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 import openai
 from nostr_dvm.utils.openai_utils import fetch_classification_response
+from types import SimpleNamespace
 
 from nostr_sdk import Event,\
                     Options,\
@@ -17,6 +18,7 @@ from nostr_sdk import Event,\
                     Keys,\
                     SecretKey,\
                     NostrSigner,\
+                    Client,\
                     ClientBuilder,\
                     Filter,\
                     init_logger,\
@@ -161,6 +163,20 @@ class MuseDVM(DVMTaskInterface):
 
         print(f"Init db DONE{self.database.metadata}")
 
+        # Query db for all kind1 notes and set query_since to latest created_at
+        # if there are posts in the DB. This handles state reload on dvm restarts and 
+        # avoids unnecessary fetching and inference work on posts that are already processed.
+        kind1_filter = Filter().kind(definitions.EventDefinitions.KIND_NOTE)
+        events_struct = await self.database.query([kind1_filter])
+        for event in events_struct.to_vec():
+            event_timestamp = event.created_at().as_secs()
+            if event_timestamp > self.query_since.as_secs():
+                self.query_since = Timestamp.from_secs(event_timestamp)
+
+        print(f"Latest timestamp of already processed notes:\
+            \n{self.query_since.to_human_datetime()}"
+        )
+
         init_logger(dvm_config.LOGLEVEL)
 
 
@@ -212,8 +228,6 @@ class MuseDVM(DVMTaskInterface):
 
 
     async def calculate_result(self, request_form):
-        from nostr_sdk import Filter
-        from types import SimpleNamespace
         ns = SimpleNamespace()
 
         options = self.set_options(request_form)
@@ -352,37 +366,85 @@ class MuseDVM(DVMTaskInterface):
         try:
             print("Start Syncing DB...")
 
-            relaylimits = RelayLimits.disable()
-            opts = (Options().relay_limits(relaylimits))
-            if self.dvm_config.WOT_FILTERING:
-                opts = opts.filtering_mode(RelayFilteringMode.WHITELIST)
-                 
-            # opts.gossip(True)
+            cli = await self.build_nostr_client()
 
-            sk = SecretKey.from_hex(self.dvm_config.PRIVATE_KEY)
-            keys = Keys.parse(sk.to_hex())
+            await self.load_wot(cli)
 
-            cli = ClientBuilder().signer(NostrSigner.keys(keys))\
-                                .database(self.database)\
-                                .opts(opts)\
-                                .build()
+            await self.connect_repo_relays(cli)
 
+            # Copy timestamp and set new anchor date for next fetch
+            since = Timestamp.from_secs(self.query_since.as_secs())
+            self.query_since = Timestamp.now()
+            time_span = self.query_since.as_secs() - since.as_secs()
 
-            # Add discovery relays for gossip
-            for relay in self.dvm_config.SYNC_DB_RELAY_LIST:
-                await cli.add_relay(relay)
-                # await cli.add_discovery_relay(relay)
+            print(f"Fetching events since: {since.to_human_datetime()}")
 
-            await cli.connect()
-            print("Client connected.")
+            await self.fetch_muse_events(cli, since)
+
+            print("Syncing complete, shutting down client...")
+
+            await cli.shutdown()
+
+            # Run inference on synced Kind1 events and save relevant ones in text file
+            await self.filter_and_save_kind1_notes(since)
 
 
+            if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
+                print("[" + self.dvm_config.NIP89.NAME
+                        + "] Done Syncing Notes of the last "
+                        + str(time_span) + " seconds.."
+                )
+
+        except Exception as e:
+            print(e)
+
+    async def build_nostr_client(self) -> Client :
+        relaylimits = RelayLimits.disable()
+        opts = (Options().relay_limits(relaylimits))
+        if self.dvm_config.WOT_FILTERING:
+            opts = opts.filtering_mode(RelayFilteringMode.WHITELIST)
+             
+        # opts.gossip(True)
+
+        sk = SecretKey.from_hex(self.dvm_config.PRIVATE_KEY)
+        keys = Keys.parse(sk.to_hex())
+
+        cli = ClientBuilder().signer(NostrSigner.keys(keys))\
+                            .database(self.database)\
+                            .opts(opts)\
+                            .build()
+
+
+        # Add discovery relays for gossip
+        for relay in self.dvm_config.SYNC_DB_RELAY_LIST:
+            await cli.add_relay(relay)
+            # await cli.add_discovery_relay(relay)
+
+        await cli.connect()
+        print("Client connected.")
+
+        return cli
+
+
+    async def load_wot(self, cli):
             self.wot_keys.clear()
 
             #whitelisting Five (source of web of trust)
-            self.wot_keys.append(PublicKey.parse("d04ecf33a303a59852fdb681ed8b412201ba85d8d2199aec73cb62681d62aa90"))
+            self.wot_keys.append(PublicKey.parse(
+                "d04ecf33a303a59852fdb681ed8b412201ba85d8d2199aec73cb62681d62aa90"
+            ))
+            self.wot_keys.append(PublicKey.parse(
+                "3f770d65d3a764a9c5cb503ae123e62ec7598ad035d836e2a810f3877a745b24"
+            ))
+            self.wot_keys.append(PublicKey.parse(
+                "460c25e682fda7832b52d1f22d3d22b3176d972f60dcdc3212ed8c92ef85065c"
+            ))
+            self.wot_keys.append(PublicKey.parse(
+                "99bb5591c9116600f845107d31f9b59e2f7c7e09a1ff802e84f1d43da557ca64"
+            ))
 
             if self.wot_outdated():
+                print("Updating Web of Trust...")
                 self.wot_keys = await self.update_wot()
                 print(
                     f"""public keys just calculated:
@@ -410,90 +472,10 @@ class MuseDVM(DVMTaskInterface):
 
             print(f'WoT filter size:{len(self.wot_keys)}')
 
-            # Have to add relays explicitly defined in Announced Git repos
-            # in order to get the relevant issues and their replies
-            git_repo_filter = Filter().kind(
-                definitions.EventDefinitions.KIND_GIT_REPOSITORY
-            )
-
-            repo_events_struct = await cli.fetch_events(
-                [git_repo_filter], timedelta(3)
-            )
-            repo_events: typing.List[Event] = repo_events_struct.to_vec()
-
-            relay_urls_to_add = []
-            for event in repo_events:
-                for tag in event.tags().to_vec():
-                    tag_array = tag.as_vec()
-                    if tag_array[0] == "relays":
-                        relay_urls_to_add = tag_array[1:]
-                        break
-
-            print(f"Adding relays from repo events: {relay_urls_to_add}")
-            for url in relay_urls_to_add:
-                await cli.add_relay(url)
-
-            # Do we have to shut client down before this and reconnect?
-            await cli.connect_with_timeout(timedelta(2))
-
-            relays = await cli.relays()
-            print(f"Connected relays: {relays}")
-
-            print(f"Fetching events since: {self.query_since.to_human_datetime()}")
-
-            # Copy timestamp and set new anchor date for next fetch
-            since = Timestamp.from_secs(self.query_since.as_secs())
-            self.query_since = Timestamp.now()
-
-            muse_filter = Filter().kinds(
-                [
-                    definitions.EventDefinitions.KIND_NOTE,
-                    definitions.EventDefinitions.KIND_GIT_ISSUE,
-                    definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
-                ]).since(since)
-
-            start_time = datetime.now()
-            events = await cli.fetch_events([muse_filter], timedelta(20))
-            time_difference =  datetime.now() - start_time
-            relays = await cli.relays()
-            print(f"Connected relays after fetch: {relays}")
-            print(f"Fetching events took {time_difference.seconds}secs")
-            notes=[]
-            issues=[]
-            replies=[]
-            for event in events.to_vec():
-                if event.kind() == definitions.EventDefinitions.KIND_NOTE:
-                    notes.append(event)
-                elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE:
-                    issues.append(event)
-                elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY:
-                    replies.append(event)
-
-            print(f"Number of notes fetched: {len(notes)}\n")
-            print(f"Number of issues fetched: {len(issues)}\n")
-            print(f"Number of issue replies fetched: {len(replies)}\n")
-
-            print("Syncing complete, shutting down client...")
-
-            await cli.shutdown()
-
-            # Run inference on synced Kind1 events and save relevant ones in text file
-            await self.filter_and_save_kind1_notes(since)
-
-
-            if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
-                print("[" + self.dvm_config.NIP89.NAME
-                        + "] Done Syncing Notes of the last "
-                        + str(self.db_since) + " seconds.."
-                )
-
-        except Exception as e:
-            print(e)
 
     def wot_outdated(self) -> bool:
-        # Update wot every 14 days
-        elapsed_time = timedelta(days=14)
-
+        # Update wot every 2 days
+        elapsed_time = timedelta(days=2)
 
         if not os.path.exists(self.wot_file_path):
             print("WOT file does not exist, no wot yet")
@@ -595,6 +577,8 @@ class MuseDVM(DVMTaskInterface):
             time_difference =  datetime.now() - start_time
             print(f"Processing events took {time_difference.seconds}secs")
 
+            timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+
             for index, line in enumerate(processed_kind1s):
                 # There can be malformed output from inference, skip those
                 response_info = line.split(":", 1)
@@ -609,15 +593,17 @@ class MuseDVM(DVMTaskInterface):
                         if post_id == event.id().to_hex()[:4]: 
                             with open(self.posts_file_path, 'a') as file:
                                 file.write(
-                                f"""{event.id().to_hex()}:{event.created_at().as_secs()}"""
+                                    f"""{event.id().to_hex()}:{event.created_at().as_secs()}"""
                                 )
 
                                 if index < len(processed_kind1s) - 1:
                                     file.write("\n")
 
-                            with open('test_kind1_result_content', 'a') as content_file:
+                            with open('test_kind1_result_content_'\
+                                + timestamp + '.txt', 'a'
+                            ) as content_file:
                                 content_file.write(
-                                f"""{event.id().to_hex()}:{event.content()}"""
+                                    f"""{event.id().to_hex()}:{event.content()}"""
                                 )
 
                                 if index < len(processed_kind1s) - 1:
@@ -627,8 +613,69 @@ class MuseDVM(DVMTaskInterface):
 
 
         print(f'The overall result of the kind1 filtering\
-            selected these events({len(all_processed_kind1s)}): {all_processed_kind1s}')
+            selected these events({len(all_processed_kind1s)}):\
+            {all_processed_kind1s}'
+        )
 
+
+    async def connect_repo_relays(self, cli):
+        # Have to add relays explicitly defined in Announced Git repos
+        # in order to get the relevant issues and their replies
+        git_repo_filter = Filter().kind(
+            definitions.EventDefinitions.KIND_GIT_REPOSITORY
+        )
+
+        repo_events_struct = await cli.fetch_events(
+            [git_repo_filter], timedelta(3)
+        )
+        repo_events: typing.List[Event] = repo_events_struct.to_vec()
+
+        relay_urls_to_add = []
+        for event in repo_events:
+            for tag in event.tags().to_vec():
+                tag_array = tag.as_vec()
+                if tag_array[0] == "relays":
+                    relay_urls_to_add = tag_array[1:]
+                    break
+
+        print(f"Adding relays from repo events: {relay_urls_to_add}")
+        for url in relay_urls_to_add:
+            await cli.add_relay(url)
+
+        # Do we have to shut client down before this and reconnect?
+        await cli.connect_with_timeout(timedelta(2))
+
+        relays = await cli.relays()
+        print(f"Connected relays: {relays}")
+
+    async def fetch_muse_events(self, cli, since):
+        muse_filter = Filter().kinds(
+            [
+                definitions.EventDefinitions.KIND_NOTE,
+                definitions.EventDefinitions.KIND_GIT_ISSUE,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
+            ]).since(since)
+
+        start_time = datetime.now()
+        events = await cli.fetch_events([muse_filter], timedelta(20))
+        time_difference =  datetime.now() - start_time
+        relays = await cli.relays()
+        print(f"Connected relays after fetch: {relays}")
+        print(f"Fetching events took {time_difference.seconds}secs")
+        notes=[]
+        issues=[]
+        replies=[]
+        for event in events.to_vec():
+            if event.kind() == definitions.EventDefinitions.KIND_NOTE:
+                notes.append(event)
+            elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE:
+                issues.append(event)
+            elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY:
+                replies.append(event)
+
+        print(f"Number of notes fetched: {len(notes)}\n")
+        print(f"Number of issues fetched: {len(issues)}\n")
+        print(f"Number of issue replies fetched: {len(replies)}\n")
 
 
 async def build_muse(
