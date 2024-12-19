@@ -49,6 +49,7 @@ async def configure_and_start_DVM(openai_client: openai.AsyncOpenAI):
                 "wss://relay.damus.io",
                 "wss://nos.lol",
                 "wss://nostr.oxtr.dev",
+                "wss://relay.nostr.band"
             ]
 
         dvm_config.WOT_FILTERING = True

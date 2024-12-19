@@ -8,13 +8,15 @@ import openai
 from nostr_dvm.utils.openai_utils import fetch_classification_response
 from types import SimpleNamespace
 
-from nostr_sdk import Event,\
+from nostr_sdk import Alphabet,\
+                    Event,\
                     Options,\
                     PublicKey,\
                     RelayFilteringMode,\
                     RelayLimits,\
                     Timestamp,\
                     Tag,\
+                    SingleLetterTag,\
                     Keys,\
                     SecretKey,\
                     NostrSigner,\
@@ -38,10 +40,10 @@ from nostr_dvm.utils.output_utils import post_process_list_to_events
 from nostr_dvm.utils.wot_utils import build_wot_network
 
 """
-Discover nostr events relevant to freelancing: Git issues and their replies 
+Discover nostr events relevant to freelancing: Git issues 
 and kind1 notes filtered for people seeking help
 Accepted Inputs: NONE (but later it could be personalized with interests of users)
-Outputs: A list of events: Kind 1, Kind 1621(Git issues), Kind 1622 (Git issue replies)
+Outputs: A list of events: Kind 1, Kind 1621(Git issues)
 Params:  None
 """
 
@@ -58,7 +60,7 @@ class MuseDVM(DVMTaskInterface):
     request_form = None
     last_schedule: int = 0
     db_since:int
-    query_since: Timestamp
+    fetch_notes_since: Timestamp
     db_name: str
     result = ""
 
@@ -130,7 +132,7 @@ class MuseDVM(DVMTaskInterface):
             raise ValueError("option 'db_since' \
             is None or the key does not exist. Add valid option!") 
 
-        self.query_since = Timestamp.from_secs(
+        self.fetch_notes_since = Timestamp.from_secs(
             Timestamp.now().as_secs() - self.db_since
         )
 
@@ -163,18 +165,20 @@ class MuseDVM(DVMTaskInterface):
 
         print(f"Init db DONE{self.database.metadata}")
 
-        # Query db for all kind1 notes and set query_since to latest created_at
+        # Query db for all kind1 notes and set fetch_notes_since to latest created_at
         # if there are posts in the DB. This handles state reload on dvm restarts and 
         # avoids unnecessary fetching and inference work on posts that are already processed.
-        kind1_filter = Filter().kind(definitions.EventDefinitions.KIND_NOTE)
-        events_struct = await self.database.query([kind1_filter])
+        events_filter = Filter().kind(
+            definitions.EventDefinitions.KIND_NOTE,
+        )
+        events_struct = await self.database.query([events_filter])
         for event in events_struct.to_vec():
             event_timestamp = event.created_at().as_secs()
-            if event_timestamp > self.query_since.as_secs():
-                self.query_since = Timestamp.from_secs(event_timestamp)
+            if event_timestamp > self.fetch_notes_since.as_secs():
+                self.fetch_notes_since = Timestamp.from_secs(event_timestamp)
 
         print(f"Latest timestamp of already processed notes:\
-            \n{self.query_since.to_human_datetime()}"
+            \n{self.fetch_notes_since.to_human_datetime()}"
         )
 
         init_logger(dvm_config.LOGLEVEL)
@@ -235,25 +239,67 @@ class MuseDVM(DVMTaskInterface):
         print(f"request_form: {request_form}")
 
         timestamp_since = Timestamp.now().as_secs() - self.db_since
-        since = Timestamp.from_secs(timestamp_since)
 
-        filter1 = Filter().kinds(
+        git_filter = Filter().kinds(
             [
                 definitions.EventDefinitions.KIND_GIT_ISSUE,
-                definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
             ]
-        ).since(since)
+        )
 
-        events = await self.database.query([filter1])
+        all_git_issue_events = await self.database.query([git_filter])
+
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print(
                 "[" + self.dvm_config.NIP89.NAME + "] Considering "\
-                + str(len(events.to_vec())) + " Git issue events"
+                + str(len(all_git_issue_events.to_vec())) + " Git issue events"
             )
+
+        issue_status_filter = Filter().kinds(
+            [
+                definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_RESOLVED,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_CLOSED,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_DRAFT
+            ]
+        )
+
+        all_issue_statuses = await self.database.query([issue_status_filter])
+        print(f"All issue statuses({len(all_issue_statuses.to_vec())}): {all_issue_statuses.to_vec()}")
+
+        # tags().find(TagKind) does NOT work for now:
+        # find(TagKind.SINGLE_LETTER(SingleLetterTag.lowercase(Alphabet('E')))))
+        filtered_git_issue_events = []
+        for git_issue in all_git_issue_events.to_vec():
+            active_status = None
+            latest_status_timestamp = 0
+            for issue_status in all_issue_statuses.to_vec():
+
+                for tag in issue_status.tags().to_vec():
+                    tag_vec = tag.as_vec()
+                    # print(f"Comparing {tag_vec[1]} ?= {git_issue.id().to_hex()}")
+
+                    if tag_vec[0] == "e"\
+                        and tag_vec[1] == git_issue.id().to_hex()\
+                        and issue_status.created_at().as_secs() > latest_status_timestamp:
+                        print("Found latest status of git issue!")
+                        latest_status_timestamp = issue_status.created_at().as_secs()
+                        active_status = Event.from_json(issue_status.as_json())
+
+            if active_status is not None:
+                print(f"Active status of git issue: {active_status.kind()}")
+
+                if active_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
+                    filtered_git_issue_events.append(Event.from_json(git_issue.as_json()))
+
+            elif active_status is None:
+                print(f"Could not find active status of issue: {git_issue}")
+
+        print(f"Found {len(filtered_git_issue_events)} OPEN git issues")
+        
 
         ns.git_events_list = {}
 
-        for event in events.to_vec():
+        for event in filtered_git_issue_events:
             ns.git_events_list[event.id().to_hex()] = event.created_at().as_secs()
 
         git_events_list_sorted = sorted(
@@ -262,27 +308,7 @@ class MuseDVM(DVMTaskInterface):
             reverse=True
         )
 
-        all_processed_kind1s = []
-
-        # Add already processed posts to result which 
-        with open(self.posts_file_path, 'a') as file:
-            pass 
-
-        with open(self.posts_file_path, 'r') as file:
-            lines = file.readlines()
-        for line in lines:
-            print(f"Reading line from saved processed notes file:\n{line}\n")
-            post_id, created_at = line.split(":", 1)
-            try:
-                if int(created_at.strip()) >= timestamp_since:
-                    all_processed_kind1s.append(post_id.strip())
-                else:
-                    print(f"{created_at} not greater than {timestamp_since}, skip this event...\n")
-            except ValueError:
-                print(f"Could not convert event timestamp to int: {post_id}:{created_at}")
-                continue
-
-        print(f"All kind1s parsed from file:\n{all_processed_kind1s}")
+        all_processed_kind1s = self.load_processed_kind1s_from_file(timestamp_since)
 
         # Prepend kind1s in the front and take as many of them as the options allow
         result_list = []
@@ -305,6 +331,29 @@ class MuseDVM(DVMTaskInterface):
 
         return json.dumps(result_list)
 
+
+    def load_processed_kind1s_from_file(self, timestamp_since) -> typing.List[str] :
+        all_processed_kind1s = []
+        # Add already processed posts to result which 
+        with open(self.posts_file_path, 'a') as file:
+            pass 
+
+        with open(self.posts_file_path, 'r') as file:
+            lines = file.readlines()
+        for line in lines:
+            print(f"Reading line from saved processed notes file:\n{line}\n")
+            post_id, created_at = line.split(":", 1)
+            try:
+                if int(created_at.strip()) >= timestamp_since:
+                    all_processed_kind1s.append(post_id.strip())
+                else:
+                    print(f"{created_at} not greater than {timestamp_since}, skip this event...\n")
+            except ValueError:
+                print(f"Could not convert event timestamp to int: {post_id}:{created_at}")
+                continue
+
+        print(f"All kind1s parsed from file:\n{all_processed_kind1s}")
+        return all_processed_kind1s
 
 
     async def post_process(self, result, event):
@@ -370,29 +419,27 @@ class MuseDVM(DVMTaskInterface):
 
             await self.load_wot(cli)
 
-            await self.connect_repo_relays(cli)
-
             # Copy timestamp and set new anchor date for next fetch
-            since = Timestamp.from_secs(self.query_since.as_secs())
-            self.query_since = Timestamp.now()
-            time_span = self.query_since.as_secs() - since.as_secs()
+            notes_since = Timestamp.from_secs(self.fetch_notes_since.as_secs())
+            self.fetch_notes_since = Timestamp.now()
+            time_span_notes = self.fetch_notes_since.as_secs() - notes_since.as_secs()
 
-            print(f"Fetching events since: {since.to_human_datetime()}")
+            print(f"Fetching notes since: {notes_since.to_human_datetime()}")
 
-            await self.fetch_muse_events(cli, since)
+            await self.fetch_muse_events(cli, notes_since)
 
             print("Syncing complete, shutting down client...")
 
             await cli.shutdown()
 
             # Run inference on synced Kind1 events and save relevant ones in text file
-            await self.filter_and_save_kind1_notes(since)
+            await self.filter_and_save_kind1_notes(notes_since)
 
 
             if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
                 print("[" + self.dvm_config.NIP89.NAME
                         + "] Done Syncing Notes of the last "
-                        + str(time_span) + " seconds.."
+                        + str(time_span_notes) + " seconds.."
                 )
 
         except Exception as e:
@@ -599,7 +646,7 @@ class MuseDVM(DVMTaskInterface):
                                 if index < len(processed_kind1s) - 1:
                                     file.write("\n")
 
-                            with open('test_kind1_result_content_'\
+                            with open('test_results/test_kind1_result_content_'\
                                 + timestamp + '.txt', 'a'
                             ) as content_file:
                                 content_file.write(
@@ -618,7 +665,7 @@ class MuseDVM(DVMTaskInterface):
         )
 
 
-    async def connect_repo_relays(self, cli):
+    async def fetch_muse_events(self, cli:Client, notes_since):
         # Have to add relays explicitly defined in Announced Git repos
         # in order to get the relevant issues and their replies
         git_repo_filter = Filter().kind(
@@ -630,52 +677,95 @@ class MuseDVM(DVMTaskInterface):
         )
         repo_events: typing.List[Event] = repo_events_struct.to_vec()
 
+        print(f"Repo events fetched: {len(repo_events)}pcs")
+
+        repo_event_coords = []
+
         relay_urls_to_add = []
         for event in repo_events:
+            # Have to construct this until coord() does not work
+            kind_str = str(event.kind().as_u16())
+            pubkey_str = event.author().to_hex()
+            d_tag_str = None
+            tags = event.tags()
+            for tag in tags.to_vec():
+                if tag.as_vec()[0] == 'd':
+                    d_tag_str = tag.as_vec()[1]
+
+            if d_tag_str is not None:
+                repo_event_coords.append(f"{kind_str}:{pubkey_str}:{d_tag_str}")
+
             for tag in event.tags().to_vec():
                 tag_array = tag.as_vec()
                 if tag_array[0] == "relays":
                     relay_urls_to_add = tag_array[1:]
                     break
 
+        print(f"Adding event coordinates from repo events: {repo_event_coords}")
         print(f"Adding relays from repo events: {relay_urls_to_add}")
         for url in relay_urls_to_add:
             await cli.add_relay(url)
 
-        # Do we have to shut client down before this and reconnect?
-        await cli.connect_with_timeout(timedelta(2))
+        await cli.connect()
 
         relays = await cli.relays()
         print(f"Connected relays: {relays}")
 
-    async def fetch_muse_events(self, cli, since):
-        muse_filter = Filter().kinds(
+        notes_filter = Filter().kinds(
             [
                 definitions.EventDefinitions.KIND_NOTE,
+            ]
+        ).since(notes_since)
+
+        issues_filter = Filter().kinds(
+            [
                 definitions.EventDefinitions.KIND_GIT_ISSUE,
-                definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY
-            ]).since(since)
+                # definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY,
+            ]
+        ).custom_tag(
+            SingleLetterTag.lowercase(Alphabet.A), repo_event_coords
+        )
+
+        issue_statuses_filter = Filter().kinds(
+            [
+                definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_RESOLVED,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_CLOSED,
+                definitions.EventDefinitions.KIND_GIT_ISSUE_DRAFT
+            ]
+        )
 
         start_time = datetime.now()
-        events = await cli.fetch_events([muse_filter], timedelta(20))
+
+        note_events = await cli.fetch_events(
+            [notes_filter],
+            timedelta(10)
+        )
+
+        issue_events = await cli.fetch_events(
+            [issues_filter],
+            timedelta(5)
+        )
+
+        issue_event_ids = []
+        for issue_event in issue_events.to_vec():
+            issue_event_ids.append(issue_event.id())
+
+        issue_statuses_filter.events(issue_event_ids)
+
+        issue_status_events = await cli.fetch_events(
+            [issue_statuses_filter],
+            timedelta(5)
+        )
+
         time_difference =  datetime.now() - start_time
         relays = await cli.relays()
         print(f"Connected relays after fetch: {relays}")
-        print(f"Fetching events took {time_difference.seconds}secs")
-        notes=[]
-        issues=[]
-        replies=[]
-        for event in events.to_vec():
-            if event.kind() == definitions.EventDefinitions.KIND_NOTE:
-                notes.append(event)
-            elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE:
-                issues.append(event)
-            elif event.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_REPLY:
-                replies.append(event)
+        print(f"Fetching all events took {time_difference.seconds}secs")
 
-        print(f"Number of notes fetched: {len(notes)}\n")
-        print(f"Number of issues fetched: {len(issues)}\n")
-        print(f"Number of issue replies fetched: {len(replies)}\n")
+        print(f"Number of notes fetched: {len(note_events.to_vec())}\n")
+        print(f"Number of issues fetched: {len(issue_events.to_vec())}\n")
+        print(f"Number of issue statuses fetched: {len(issue_status_events.to_vec())}\n")
 
 
 async def build_muse(
