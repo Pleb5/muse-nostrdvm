@@ -398,7 +398,7 @@ class MuseDVM(DVMTaskInterface):
                 result_event = await self.process(self.request_form)
 
                 try:
-                    with open("test_result_muse_" + timestamp \
+                    with open("test_results/test_result_muse_" + timestamp \
                     + '.txt', 'w', encoding="utf8") as output_file:
 
                         output_file.write(result_event)
