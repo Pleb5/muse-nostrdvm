@@ -281,7 +281,7 @@ class MuseDVM(DVMTaskInterface):
                     if tag_vec[0] == "e"\
                         and tag_vec[1] == git_issue.id().to_hex()\
                         and issue_status.created_at().as_secs() > latest_status_timestamp:
-                        print("Found latest status of git issue!")
+                        print(f"Found latest status of git issue: {issue_status.kind()}")
                         latest_status_timestamp = issue_status.created_at().as_secs()
                         active_status = Event.from_json(issue_status.as_json())
 
@@ -341,8 +341,14 @@ class MuseDVM(DVMTaskInterface):
         with open(self.posts_file_path, 'r') as file:
             lines = file.readlines()
         for line in lines:
-            print(f"Reading line from saved processed notes file:\n{line}\n")
-            post_id, created_at = line.split(":", 1)
+            # print(f"Reading line from saved processed notes file:\n{line}\n")
+            parsed_line = line.split(":", 1)
+
+            if len(parsed_line) != 2:
+                continue
+
+            post_id = parsed_line[0]
+            created_at = parsed_line[1]
             try:
                 if int(created_at.strip()) >= timestamp_since:
                     all_processed_kind1s.append(post_id.strip())
@@ -352,7 +358,7 @@ class MuseDVM(DVMTaskInterface):
                 print(f"Could not convert event timestamp to int: {post_id}:{created_at}")
                 continue
 
-        print(f"All kind1s parsed from file:\n{all_processed_kind1s}")
+        # print(f"All kind1s parsed from file:\n{all_processed_kind1s}")
         return all_processed_kind1s
 
 
@@ -370,7 +376,7 @@ class MuseDVM(DVMTaskInterface):
         return result
 
     async def schedule(self, dvm_config):
-        print("Schedule")
+        # print("Schedule")
         if dvm_config.SCHEDULE_UPDATES_SECONDS == 0:
             raise ValueError("Error Schedule update period not set!")
         else:
@@ -386,7 +392,7 @@ class MuseDVM(DVMTaskInterface):
 
                 print("Calculating result...")
                 self.result = await self.calculate_result(self.request_form)
-                print(f"Result:{self.result}")
+                # print(f"Result:{self.result}")
 
                 timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
                 result_event = await self.process(self.request_form)
@@ -620,12 +626,13 @@ class MuseDVM(DVMTaskInterface):
                 self.openai_client, preprocessed_kind1s
             )
 
-            print(f"Processed events! Result:{processed_kind1s}")
+            # print(f"Processed events! Result:{processed_kind1s}")
             time_difference =  datetime.now() - start_time
             print(f"Processing events took {time_difference.seconds}secs")
 
             timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
+            wrote_first_event = False
             for index, line in enumerate(processed_kind1s):
                 # There can be malformed output from inference, skip those
                 response_info = line.split(":", 1)
@@ -639,6 +646,10 @@ class MuseDVM(DVMTaskInterface):
                     for event in batch:
                         if post_id == event.id().to_hex()[:4]: 
                             with open(self.posts_file_path, 'a') as file:
+                                if not wrote_first_event:
+                                    file.write("\n")
+                                    wrote_first_event = True
+
                                 file.write(
                                     f"""{event.id().to_hex()}:{event.created_at().as_secs()}"""
                                 )
@@ -735,12 +746,24 @@ class MuseDVM(DVMTaskInterface):
             ]
         )
 
+        open_issue_statuses_filter = Filter().kinds(
+            [
+                definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN,
+            ]
+        )
+        open_issues = await cli.fetch_events([open_issue_statuses_filter],timedelta(5))
+        print(f"fetched all open issue statuses: {len(open_issues.to_vec())} pcs")
+        print(f"open issues: {open_issues.to_vec()}")
+
         start_time = datetime.now()
 
         note_events = await cli.fetch_events(
             [notes_filter],
             timedelta(10)
         )
+
+        # remove wot for more results
+        # await cli.filtering().remove_public_keys(self.wot_keys)
 
         issue_events = await cli.fetch_events(
             [issues_filter],
@@ -766,7 +789,13 @@ class MuseDVM(DVMTaskInterface):
         print(f"Number of notes fetched: {len(note_events.to_vec())}\n")
         print(f"Number of issues fetched: {len(issue_events.to_vec())}\n")
         print(f"Number of issue statuses fetched: {len(issue_status_events.to_vec())}\n")
+        open_issues_counter = 0
+        for issue_status in issue_status_events.to_vec():
+            if issue_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
+                open_issues_counter += 1
 
+
+        print(f"{open_issues_counter} open issue status found")
 
 async def build_muse(
     name,
