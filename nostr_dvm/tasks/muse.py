@@ -14,6 +14,7 @@ from nostr_sdk import Alphabet,\
                     PublicKey,\
                     RelayFilteringMode,\
                     RelayLimits,\
+                    RelayOptions,\
                     Timestamp,\
                     Tag,\
                     SingleLetterTag,\
@@ -54,6 +55,7 @@ class MuseDVM(DVMTaskInterface):
     FIX_COST: float = 0
     openai_client: openai.AsyncOpenAI
     wot_file_path: str
+    last_issues_fetch_file_path: str
     wot_keys:typing.List[PublicKey] = []
     posts_file_path: str
     dvm_config: DVMConfig
@@ -87,9 +89,17 @@ class MuseDVM(DVMTaskInterface):
         wot_file_path = os.getenv("WOT_FILE_PATH")
 
         if wot_file_path is None:
-            raise EnvironmentError("Could not load WOT file path!")
+            raise EnvironmentError("Could not load 'WOT_FILE_PATH'!")
 
         self.wot_file_path = wot_file_path
+
+        last_issues_fetch_file_path = os.getenv("LAST_ISSUES_FETCHED_FILE_PATH")
+
+        if last_issues_fetch_file_path is None:
+            raise EnvironmentError("Could not load 'LAST_ISSUES_FETCHED_FILE_PATH'!")
+
+        self.last_issues_fetch_file_path = last_issues_fetch_file_path
+
 
         posts_file_path = os.getenv("PROCESSED_POSTS_PATH")
 
@@ -238,68 +248,13 @@ class MuseDVM(DVMTaskInterface):
 
         print(f"request_form: {request_form}")
 
-        timestamp_since = Timestamp.now().as_secs() - self.db_since
 
-        git_filter = Filter().kinds(
-            [
-                definitions.EventDefinitions.KIND_GIT_ISSUE,
-            ]
-        )
-
-        all_git_issue_events = await self.database.query([git_filter])
-
-        if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
-            print(
-                "[" + self.dvm_config.NIP89.NAME + "] Considering "\
-                + str(len(all_git_issue_events.to_vec())) + " Git issue events"
-            )
-
-        issue_status_filter = Filter().kinds(
-            [
-                definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN,
-                definitions.EventDefinitions.KIND_GIT_ISSUE_RESOLVED,
-                definitions.EventDefinitions.KIND_GIT_ISSUE_CLOSED,
-                definitions.EventDefinitions.KIND_GIT_ISSUE_DRAFT
-            ]
-        )
-
-        all_issue_statuses = await self.database.query([issue_status_filter])
-        print(f"All issue statuses({len(all_issue_statuses.to_vec())}): {all_issue_statuses.to_vec()}")
-
-        # tags().find(TagKind) does NOT work for now:
-        # find(TagKind.SINGLE_LETTER(SingleLetterTag.lowercase(Alphabet('E')))))
-        filtered_git_issue_events = []
-        for git_issue in all_git_issue_events.to_vec():
-            active_status = None
-            latest_status_timestamp = 0
-            for issue_status in all_issue_statuses.to_vec():
-
-                for tag in issue_status.tags().to_vec():
-                    tag_vec = tag.as_vec()
-                    # print(f"Comparing {tag_vec[1]} ?= {git_issue.id().to_hex()}")
-
-                    if tag_vec[0] == "e"\
-                        and tag_vec[1] == git_issue.id().to_hex()\
-                        and issue_status.created_at().as_secs() > latest_status_timestamp:
-                        print(f"Found latest status of git issue: {issue_status.kind()}")
-                        latest_status_timestamp = issue_status.created_at().as_secs()
-                        active_status = Event.from_json(issue_status.as_json())
-
-            if active_status is not None:
-                print(f"Active status of git issue: {active_status.kind()}")
-
-                if active_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
-                    filtered_git_issue_events.append(Event.from_json(git_issue.as_json()))
-
-            elif active_status is None:
-                print(f"Could not find active status of issue: {git_issue}")
-
-        print(f"Found {len(filtered_git_issue_events)} OPEN git issues")
-        
+        # TODO: SORT BY TIMESTAMP AND RETURN EVENTS
+        open_issue_events = await self.load_open_issues()
 
         ns.git_events_list = {}
 
-        for event in filtered_git_issue_events:
+        for event in open_issue_events:
             ns.git_events_list[event.id().to_hex()] = event.created_at().as_secs()
 
         git_events_list_sorted = sorted(
@@ -308,6 +263,8 @@ class MuseDVM(DVMTaskInterface):
             reverse=True
         )
 
+        timestamp_since = Timestamp.now().as_secs() - self.db_since
+        # TODO: save these also in database and load here from ids and db query
         all_processed_kind1s = self.load_processed_kind1s_from_file(timestamp_since)
 
         # Prepend kind1s in the front and take as many of them as the options allow
@@ -323,13 +280,38 @@ class MuseDVM(DVMTaskInterface):
 
         result_list = result_list[:int(options["max_results"])]
 
-        print(f"Result list({len(result_list)}):\n{result_list}")
+        # print(f"Result list({len(result_list)}):\n{result_list}")
 
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print("[" + self.dvm_config.NIP89.NAME + "] Filtered " + str(
                 len(result_list)) + " fitting events.")
 
         return json.dumps(result_list)
+
+
+    async def load_open_issues(self) -> typing.List[Event] :
+        issue_ids = []
+        # Add already processed posts to result which 
+        with open(self.last_issues_fetch_file_path, 'a') as file:
+            pass 
+
+        with open(self.last_issues_fetch_file_path, 'r') as file:
+            lines = file.readlines()
+        for line in lines:
+            try:
+                post_id = line.strip()
+                Tag.parse(['e', post_id])
+                issue_ids.append(post_id)
+
+            except Exception as e:
+                print(f"Error while parsing open issue: {e}\nContinuing..")
+                continue
+
+        filter = Filter().ids(issue_ids)
+
+        open_issues_struct = await self.database.query([filter])
+
+        return open_issues_struct.to_vec()
 
 
     def load_processed_kind1s_from_file(self, timestamp_since) -> typing.List[str] :
@@ -453,11 +435,12 @@ class MuseDVM(DVMTaskInterface):
 
     async def build_nostr_client(self) -> Client :
         relaylimits = RelayLimits.disable()
-        opts = (Options().relay_limits(relaylimits))
+        opts = Options().relay_limits(relaylimits)\
+                        .automatic_authentication(False)
         if self.dvm_config.WOT_FILTERING:
             opts = opts.filtering_mode(RelayFilteringMode.WHITELIST)
              
-        # opts.gossip(True)
+        # opts = opts.gossip(True)
 
         sk = SecretKey.from_hex(self.dvm_config.PRIVATE_KEY)
         keys = Keys.parse(sk.to_hex())
@@ -677,28 +660,143 @@ class MuseDVM(DVMTaskInterface):
 
 
     async def fetch_muse_events(self, cli:Client, notes_since):
+        start_time = datetime.now()
+
+        await self.fetch_kind1_notes(cli, notes_since)
+
+        if self.issues_outdated():
+            await self.fetch_repo_issues_and_statuses(cli)
+
+        time_difference =  datetime.now() - start_time
+        print(f"Fetching all events took {time_difference.seconds}secs")
+
+
+        # relays = await cli.relays()
+        # print(f"Connected relays after fetch: {relays}")
+
+    
+    async def fetch_kind1_notes(self, cli, notes_since) -> typing.List[Event]:
+        notes_filter = Filter().kinds(
+            [
+                definitions.EventDefinitions.KIND_NOTE,
+            ]
+        ).since(notes_since)
+
+
+        note_events = await cli.fetch_events(
+            [notes_filter],
+            timedelta(seconds = 10)
+        )
+        print(f"Number of notes fetched: {len(note_events.to_vec())}\n")
+        return note_events
+
+    async def fetch_repo_issues_and_statuses(self, cli):
+        repo_events = await self.fetch_repos(cli)
+
+        overall_issue_status_events:typing.List[Event] = []
+        overall_issue_events:typing.List[Event] = []
+
         # Have to add relays explicitly defined in Announced Git repos
         # in order to get the relevant issues and their replies
+
+        # custom relay opts and timeout settings to not get rekt while trying 
+        # too many relays. timedelta(seconds = ...)
+        relay_opts = RelayOptions().reconnect(False).ping(False)
+
+        batch = 5
+        print(f"Start fetching all git repos and their issues and issue statuses\
+            with batch size: {batch}"
+        )
+        for i in range(0, len(repo_events), batch):
+            try:
+                print(f"FETCH ISSUES AND STATUSES OF REPOS: {i} : {i+batch}")
+                batched_repo_events = repo_events[i:i+batch]
+                repo_event_coords = []
+                repo_urls = []
+
+                self.extract_a_tags_and_relays_from_repo_events(
+                    batched_repo_events,
+                    repo_event_coords,
+                    repo_urls
+                )
+
+                print(f"Adding event coordinates from repo events: {repo_event_coords}")
+
+                await self.add_parsed_repo_relays(cli, repo_urls, relay_opts)
+
+                issue_events_of_repo = await self.fetch_issues(cli, repo_event_coords)
+
+                overall_issue_events += issue_events_of_repo
+
+                await self.fetch_issue_statuses(cli, issue_events_of_repo)
+
+                issue_status_events_of_repo = await self.fetch_issue_statuses(
+                    cli,
+                    issue_events_of_repo
+                )
+
+                overall_issue_status_events += issue_status_events_of_repo
+
+                print(f"Removing relays from repo events: {repo_urls}")
+                for url in repo_urls:
+                    try:
+                        # await cli.pool().remove_relay(url)
+                        await cli.remove_relay(url)
+                    except Exception as e:
+                        print(f"Exception while removing relay: {e}")
+                        continue
+                print(f"fetched {i+batch} repos and their issues and statuses!")
+            except Exception as e:
+                print(f"Exception happened while fetching git stuff: {e}\nContinuing...")
+                continue
+
+
+
+        open_issues_counter = 0
+        for issue_status in overall_issue_status_events:
+            if issue_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
+                open_issues_counter += 1
+
+
+        print(f"{open_issues_counter} open issue status found")
+
+        print(f"Number of issues fetched: {len(overall_issue_events)}\n")
+
+        print(f"Number of issue statuses fetched:\
+            {len(overall_issue_status_events)}\n"
+        )
+
+        await self.find_and_save_open_issues(
+            overall_issue_events,
+            overall_issue_status_events
+        )
+
+    async def fetch_repos(self, cli) -> typing.List[Event]:
         git_repo_filter = Filter().kind(
             definitions.EventDefinitions.KIND_GIT_REPOSITORY
         )
 
         repo_events_struct = await cli.fetch_events(
-            [git_repo_filter], timedelta(3)
+            [git_repo_filter], timedelta(seconds = 3)
         )
         repo_events: typing.List[Event] = repo_events_struct.to_vec()
 
         print(f"Repo events fetched: {len(repo_events)}pcs")
+        return repo_events
 
-        repo_event_coords = []
 
-        relay_urls_to_add = []
-        for event in repo_events:
-            # Have to construct this until coord() does not work
-            kind_str = str(event.kind().as_u16())
-            pubkey_str = event.author().to_hex()
+    def extract_a_tags_and_relays_from_repo_events(
+        self,
+        repo_events,
+        repo_event_coords,
+        repo_urls
+    ):
+        for repo_event in repo_events:
+            # Have to construct event coordinate while coord() does not work
+            kind_str = str(repo_event.kind().as_u16())
+            pubkey_str = repo_event.author().to_hex()
             d_tag_str = None
-            tags = event.tags()
+            tags = repo_event.tags()
             for tag in tags.to_vec():
                 if tag.as_vec()[0] == 'd':
                     d_tag_str = tag.as_vec()[1]
@@ -706,28 +804,28 @@ class MuseDVM(DVMTaskInterface):
             if d_tag_str is not None:
                 repo_event_coords.append(f"{kind_str}:{pubkey_str}:{d_tag_str}")
 
-            for tag in event.tags().to_vec():
+            for tag in repo_event.tags().to_vec():
                 tag_array = tag.as_vec()
                 if tag_array[0] == "relays":
-                    relay_urls_to_add = tag_array[1:]
+                    repo_urls += tag_array[1:]
                     break
 
-        print(f"Adding event coordinates from repo events: {repo_event_coords}")
-        print(f"Adding relays from repo events: {relay_urls_to_add}")
-        for url in relay_urls_to_add:
-            await cli.add_relay(url)
+    async def add_parsed_repo_relays(self, cli, repo_urls, relay_opts):
+        print(f"Adding relays from repo events: {repo_urls}")
+        for url in repo_urls:
+            try:
+                # add relays with custom opts to pool
+                await cli.pool().add_relay(url, relay_opts)
+            except Exception as e:
+                print(f"Exception while adding relay: {e}")
+                continue
 
-        await cli.connect()
+        await cli.connect_with_timeout(timedelta(seconds = 2))
 
         relays = await cli.relays()
         print(f"Connected relays: {relays}")
 
-        notes_filter = Filter().kinds(
-            [
-                definitions.EventDefinitions.KIND_NOTE,
-            ]
-        ).since(notes_since)
-
+    async def fetch_issues(self, cli, repo_event_coords) -> typing.List[Event]:
         issues_filter = Filter().kinds(
             [
                 definitions.EventDefinitions.KIND_GIT_ISSUE,
@@ -737,6 +835,21 @@ class MuseDVM(DVMTaskInterface):
             SingleLetterTag.lowercase(Alphabet.A), repo_event_coords
         )
 
+        print("Fetching issues from repos...")
+        issue_events_struct = await cli.fetch_events(
+            [issues_filter],
+            timedelta(seconds = 3)
+        )
+        print(f"Fetched all issues from repos: {len(issue_events_struct.to_vec())}")
+
+        return issue_events_struct.to_vec()
+
+
+    async def fetch_issue_statuses(
+        self,
+        cli,
+        issue_events_of_repo
+    ) -> typing.List[Event]:
         issue_statuses_filter = Filter().kinds(
             [
                 definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN,
@@ -746,56 +859,106 @@ class MuseDVM(DVMTaskInterface):
             ]
         )
 
-        open_issue_statuses_filter = Filter().kinds(
-            [
-                definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN,
-            ]
-        )
-        open_issues = await cli.fetch_events([open_issue_statuses_filter],timedelta(5))
-        print(f"fetched all open issue statuses: {len(open_issues.to_vec())} pcs")
-        print(f"open issues: {open_issues.to_vec()}")
-
-        start_time = datetime.now()
-
-        note_events = await cli.fetch_events(
-            [notes_filter],
-            timedelta(10)
-        )
-
-        # remove wot for more results
-        # await cli.filtering().remove_public_keys(self.wot_keys)
-
-        issue_events = await cli.fetch_events(
-            [issues_filter],
-            timedelta(5)
-        )
-
         issue_event_ids = []
-        for issue_event in issue_events.to_vec():
+        for issue_event in issue_events_of_repo:
             issue_event_ids.append(issue_event.id())
 
         issue_statuses_filter.events(issue_event_ids)
 
-        issue_status_events = await cli.fetch_events(
+        print("Fetching statuses of issues from repos...")
+
+        issue_status_events_struct = await cli.fetch_events(
             [issue_statuses_filter],
-            timedelta(5)
+            timedelta(seconds = 3)
         )
 
-        time_difference =  datetime.now() - start_time
-        relays = await cli.relays()
-        print(f"Connected relays after fetch: {relays}")
-        print(f"Fetching all events took {time_difference.seconds}secs")
+        issue_status_events_of_repo = issue_status_events_struct.to_vec()
 
-        print(f"Number of notes fetched: {len(note_events.to_vec())}\n")
-        print(f"Number of issues fetched: {len(issue_events.to_vec())}\n")
-        print(f"Number of issue statuses fetched: {len(issue_status_events.to_vec())}\n")
+        print(f"Fetched all statuses of issues from repos:\
+            {len(issue_status_events_of_repo)}"
+        )
+
+
         open_issues_counter = 0
-        for issue_status in issue_status_events.to_vec():
+        for issue_status in issue_status_events_of_repo:
             if issue_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
                 open_issues_counter += 1
 
+        print(f"{open_issues_counter} open issues statuses found for now...")
 
-        print(f"{open_issues_counter} open issue status found")
+        return issue_status_events_of_repo
+
+
+    def issues_outdated(self) -> bool:
+        # Update wot every 2 days
+        elapsed_time = timedelta(seconds=2) # days=2
+
+        if not os.path.exists(self.last_issues_fetch_file_path):
+            print("Last issues fetched file does not exist, no fetch yet")
+            return True
+
+        mod_time = os.path.getmtime(self.last_issues_fetch_file_path)
+        last_mod_date = datetime.fromtimestamp(mod_time)
+
+        current_time = datetime.now()
+        time_difference = current_time - last_mod_date
+
+        print(f"File last modified: {last_mod_date}")
+        print(f"Time elapsed since last modification: {time_difference}")
+
+        if time_difference > elapsed_time:
+            return True
+        else:
+            return False
+
+
+    async def find_and_save_open_issues(
+        self,
+        all_git_issue_events: typing.List[Event], 
+        all_issue_statuses: typing.List[Event]
+    ):
+        # tags().find(TagKind) does NOT work for now:
+        # find(TagKind.SINGLE_LETTER(SingleLetterTag.lowercase(Alphabet('E')))))
+        with open(self.last_issues_fetch_file_path, 'w') as file:
+            filtered_git_issue_events = []
+            for git_issue in all_git_issue_events:
+                active_status = None
+                latest_status_timestamp = 0
+                status_counter = 0
+                for issue_status in all_issue_statuses:
+
+                    for tag in issue_status.tags().to_vec():
+                        tag_vec = tag.as_vec()
+                        # print(f"ISSUE's tags:\n{tag_vec}")
+                        # print(f"Comparing {tag_vec[1]} ?= {git_issue.id().to_hex()}")
+                        if tag_vec[0] == "e"\
+                            and tag_vec[1] == git_issue.id().to_hex()\
+                            and issue_status.created_at().as_secs() > latest_status_timestamp:
+                            print(f"Found latest status of git issue: {issue_status.kind()}")
+                            latest_status_timestamp = issue_status.created_at().as_secs()
+                            active_status = Event.from_json(issue_status.as_json())
+                            status_counter += 1
+
+                print(f"{status_counter} statuses found for issue")
+
+                if active_status is not None:
+                    print(f"Active status of git issue: {active_status.kind()}")
+
+                    if active_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
+                        filtered_git_issue_events.append(
+                            Event.from_json(git_issue.as_json())
+                        )
+
+                        await self.database.save_event(git_issue)
+
+                        file.write(git_issue.id().to_hex() + '\n')
+
+                elif active_status is None:
+                    print(f"Could not find active status of issue: {git_issue}")
+                else:
+                    print(f"Issue is NOT open! Status: {active_status}")
+
+        print(f"Found {len(filtered_git_issue_events)} OPEN git issues")
 
 async def build_muse(
     name,
