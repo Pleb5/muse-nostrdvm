@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 
 import openai
 from nostr_dvm.utils.openai_utils import fetch_classification_response
-from types import SimpleNamespace
 
 from nostr_sdk import Alphabet,\
                     Event,\
@@ -251,18 +250,20 @@ class MuseDVM(DVMTaskInterface):
         timestamp_since = Timestamp.now().as_secs() - self.db_since
         all_processed_kind1s = self.load_processed_kind1s(timestamp_since)
 
+        open_issues_list = []
+        processed_kind1_list = []
         result_list = []
 
         # How should the posts be arranged in the result?
         for event_id in open_issue_events:
             e_tag = Tag.parse(["e", event_id])
-            result_list.append(e_tag.as_vec())
+            open_issues_list.append(e_tag.as_vec())
 
         for event_id in all_processed_kind1s:
             e_tag = Tag.parse(["e", event_id])
-            result_list.append(e_tag.as_vec())
+            processed_kind1_list.append(e_tag.as_vec())
 
-        result_list = result_list[:int(options["max_results"])]
+        result_list = open_issues_list[:int(options["max_results"])]
 
         if self.dvm_config.LOGLEVEL.value >= LogLevel.DEBUG.value:
             print("[" + self.dvm_config.NIP89.NAME + "] Filtered " + str(
@@ -639,6 +640,13 @@ class MuseDVM(DVMTaskInterface):
         start_time = datetime.now()
 
         notes = await self.fetch_kind1_notes(cli, notes_since)
+        if len(notes) > 0:
+            latest_note = notes[0]
+            for note in notes:
+                if note.created_at().as_secs() > latest_note.created_at().as_secs():
+                    latest_note = note
+            # Save latest to know where we want to continue fetching next time
+            await self.database.save_event(latest_note)
 
         # Run inference on synced Kind1 events and save relevant ones in text file
         await self.filter_and_save_kind1_notes(notes)
@@ -666,7 +674,7 @@ class MuseDVM(DVMTaskInterface):
             timedelta(seconds = 10)
         )
         print(f"Number of notes fetched: {len(note_events.to_vec())}\n")
-        return note_events
+        return note_events.to_vec()
 
     async def fetch_and_save_open_issues(self, cli):
         repo_events = await self.fetch_repos(cli)
@@ -706,7 +714,6 @@ class MuseDVM(DVMTaskInterface):
 
                 overall_issue_events += issue_events_of_repo
 
-                await self.fetch_issue_statuses(cli, issue_events_of_repo)
 
                 issue_status_events_of_repo = await self.fetch_issue_statuses(
                     cli,
@@ -728,13 +735,6 @@ class MuseDVM(DVMTaskInterface):
                 print(f"Exception happened while fetching git stuff: {e}\nContinuing...")
                 continue
 
-        open_issues_counter = 0
-        for issue_status in overall_issue_status_events:
-            if issue_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
-                open_issues_counter += 1
-
-
-        print(f"Overall {open_issues_counter} open issue status found")
 
         print(f"Number of issues fetched: {len(overall_issue_events)}\n")
 
@@ -746,18 +746,22 @@ class MuseDVM(DVMTaskInterface):
             overall_issue_events,
             overall_issue_status_events
         )
+        print(f"{len(open_issues)} issues found overall, writing to file...")
         with open(self.last_issues_fetch_file_path, 'w') as file:
             for git_issue in open_issues:
                 file.write(git_issue.id().to_hex() + '\n')
 
 
     async def fetch_repos(self, cli) -> typing.List[Event]:
+        test = 'ngit'
         git_repo_filter = Filter().kind(
             definitions.EventDefinitions.KIND_GIT_REPOSITORY
-        )
+        )#.custom_tag(
+        #     SingleLetterTag.lowercase(Alphabet.D), [test]
+        # )
 
         repo_events_struct = await cli.fetch_events(
-            [git_repo_filter], timedelta(seconds = 3)
+            [git_repo_filter], timedelta(seconds = 5)
         )
         repo_events: typing.List[Event] = repo_events_struct.to_vec()
 
@@ -800,7 +804,7 @@ class MuseDVM(DVMTaskInterface):
                 print(f"Exception while adding relay: {e}")
                 continue
 
-        await cli.connect_with_timeout(timedelta(seconds = 2))
+        await cli.connect_with_timeout(timedelta(seconds = 20))
 
         relays = await cli.relays()
         print(f"Connected relays: {relays}")
@@ -818,9 +822,11 @@ class MuseDVM(DVMTaskInterface):
         print("Fetching issues from repos...")
         issue_events_struct = await cli.fetch_events(
             [issues_filter],
-            timedelta(seconds = 3)
+            timedelta(seconds = 15)
         )
-        print(f"Fetched all issues from repos: {len(issue_events_struct.to_vec())}")
+        print(f"Fetched all issues from repos:\
+            {len(issue_events_struct.to_vec())}"
+        )
 
         return issue_events_struct.to_vec()
 
@@ -843,13 +849,15 @@ class MuseDVM(DVMTaskInterface):
         for issue_event in issue_events_of_repo:
             issue_event_ids.append(issue_event.id())
 
-        issue_statuses_filter.events(issue_event_ids)
+        issue_statuses_filter = issue_statuses_filter.events(
+            issue_event_ids
+        )
 
         print("Fetching statuses of issues from repos...")
 
         issue_status_events_struct = await cli.fetch_events(
             [issue_statuses_filter],
-            timedelta(seconds = 3)
+            timedelta(seconds = 15)
         )
 
         issue_status_events_of_repo = issue_status_events_struct.to_vec()
@@ -858,20 +866,12 @@ class MuseDVM(DVMTaskInterface):
             {len(issue_status_events_of_repo)}"
         )
 
-
-        open_issues_counter = 0
-        for issue_status in issue_status_events_of_repo:
-            if issue_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
-                open_issues_counter += 1
-
-        print(f"{open_issues_counter} open issues statuses found for now...")
-
         return issue_status_events_of_repo
 
 
     def issues_outdated(self) -> bool:
         # Update wot every 2 days
-        elapsed_time = timedelta(seconds=2) # days=2
+        elapsed_time = timedelta(days=2)
 
         if not os.path.exists(self.last_issues_fetch_file_path):
             print("Last issues fetched file does not exist, no fetch yet")
@@ -923,14 +923,16 @@ class MuseDVM(DVMTaskInterface):
             if active_status is not None:
                 print(f"Active status of git issue: {active_status.kind()}")
 
-                if active_status.kind() == definitions.EventDefinitions.KIND_GIT_ISSUE_OPEN:
-                    filtered_git_issue_events.append(
-                        Event.from_json(git_issue.as_json())
-                    )
+                if active_status.kind() == definitions.EventDefinitions\
+                                            .KIND_GIT_ISSUE_OPEN:
+                    filtered_git_issue_events.append(git_issue)
 
 
             elif active_status is None:
-                print(f"Could not find active status of issue: {git_issue}")
+                print(f"Could not find active status of issue: \
+                    {git_issue}\nDefaulting to OPEN"
+                )
+                filtered_git_issue_events.append(git_issue)
             else:
                 print(f"Issue is NOT open! Status: {active_status}")
 
