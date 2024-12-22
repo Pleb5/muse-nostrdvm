@@ -48,6 +48,9 @@ async def configure_and_start_DVM(env_path: Path):
                 "wss://relay.primal.net",
                 "wss://nostr.mom",
                 "wss://nostr.oxtr.dev",
+                "wss://nos.lol",
+                "wss://relay.damus.io",
+                "wss://relay.nostr.band",
             ]
 
         dvm_config.SYNC_DB_RELAY_LIST = [

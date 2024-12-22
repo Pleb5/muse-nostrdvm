@@ -21,13 +21,14 @@ from nostr_sdk import Keys, LogLevel
 
 async def configure_and_start_DVM(openai_client: openai.AsyncOpenAI, env_path: Path):
     try:
+        announce = True
         # ------------------- ADMIN CONFIG
         admin_config = AdminConfig()
         admin_key = Keys.parse(os.getenv("ADMIN_PRIVATE_KEY")).secret_key().to_hex()
         admin_config.PRIVKEY = admin_key
-        admin_config.REBROADCAST_NIP89 = False
-        admin_config.REBROADCAST_NIP65_RELAY_LIST = False
-        admin_config.UPDATE_PROFILE = True
+        admin_config.REBROADCAST_NIP89 = announce
+        admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
+        admin_config.UPDATE_PROFILE = announce
         admin_config.LUD16 = 'five@npub.cash'
 
         # ------------------- DVM CONFIG
@@ -48,6 +49,9 @@ async def configure_and_start_DVM(openai_client: openai.AsyncOpenAI, env_path: P
                 "wss://relay.primal.net",
                 "wss://nostr.mom",
                 "wss://nostr.oxtr.dev",
+                "wss://nos.lol",
+                "wss://relay.damus.io",
+                "wss://relay.nostr.band",
             ]
 
         dvm_config.SYNC_DB_RELAY_LIST = [
@@ -111,7 +115,7 @@ async def configure_and_start_DVM(openai_client: openai.AsyncOpenAI, env_path: P
                 name,
                 dvm_config.PRIVATE_KEY,
                 nip89info["picture"]
-            )
+        )
 
         nip89config.CONTENT = json.dumps(nip89info)
         nip89config.KIND = EventDefinitions.KIND_NIP90_CONTENT_DISCOVERY
