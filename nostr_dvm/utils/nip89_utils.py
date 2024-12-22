@@ -112,19 +112,19 @@ async def nip89_fetch_events_pubkey(client, pubkey, kind):
         return dvms[dvm].content()
 
 
-def check_and_set_d_tag(identifier, name, pk, imageurl):
+def check_and_set_d_tag(env_path, identifier, name, pk, imageurl):
     if not os.getenv("NIP89_DTAG_" + identifier.upper()):
         new_dtag = nip89_create_d_tag(name, Keys.parse(pk).public_key().to_hex(),
                                       imageurl)
-        nip89_add_dtag_to_env_file("NIP89_DTAG_" + identifier.upper(), new_dtag)
+        nip89_add_dtag_to_env_file(env_path, "NIP89_DTAG_" + identifier.upper(), new_dtag)
         print("Some new dtag:" + new_dtag)
         return new_dtag
     else:
         return os.getenv("NIP89_DTAG_" + identifier.upper())
 
 
-def nip89_add_dtag_to_env_file(dtag, oskey):
-    env_path = Path('.env')
+def nip89_add_dtag_to_env_file(env_path, dtag, oskey):
+    env_path = Path(env_path)
     if env_path.is_file():
         print(f'loading environment from {env_path.resolve()}')
         dotenv.load_dotenv(env_path, verbose=True, override=True)

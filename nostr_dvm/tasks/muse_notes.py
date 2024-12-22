@@ -104,6 +104,7 @@ class MuseNotes(DVMTaskInterface):
             except Exception as e:
                 print(f"Error: Could not create directories for {path}. Reason: {e}")
 
+
         print(f"Options:{options}")
 
         if options is None:

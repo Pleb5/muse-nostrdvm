@@ -18,20 +18,23 @@ from nostr_sdk import Keys, LogLevel
 
 
 
-async def configure_and_start_DVM():
+async def configure_and_start_DVM(env_path: Path):
     try:
+        announce = True
         # ------------------- ADMIN CONFIG
         admin_config = AdminConfig()
-        admin_config.PRIVKEY = os.getenv("ADMIN_PRIVATE_KEY")
-        admin_config.REBROADCAST_NIP89 = False
-        admin_config.REBROADCAST_NIP65_RELAY_LIST = False
-        admin_config.UPDATE_PROFILE = True
+        admin_key = Keys.parse(os.getenv("ADMIN_PRIVATE_KEY")).secret_key().to_hex()
+        admin_config.PRIVKEY = admin_key
+        admin_config.REBROADCAST_NIP89 = announce
+        admin_config.REBROADCAST_NIP65_RELAY_LIST = announce
+        admin_config.UPDATE_PROFILE = announce
         admin_config.LUD16 = 'five@npub.cash'
 
         # ------------------- DVM CONFIG
         dvm_config = DVMConfig()
         dvm_config.LOGLEVEL = LogLevel.ERROR
-        dvm_config.PRIVATE_KEY: str = os.getenv("DVM_PRIVATE_KEY")
+        dvm_key = Keys.parse(os.getenv("DVM_PRIVATE_KEY")).secret_key().to_hex()
+        dvm_config.PRIVATE_KEY: str = dvm_key
         dvm_config.PUBLIC_KEY = Keys.parse(dvm_config.PRIVATE_KEY).public_key().to_hex()
         dvm_config.FIX_COST: float = 0
         dvm_config.PER_UNIT_COST: float = 0
@@ -103,11 +106,12 @@ async def configure_and_start_DVM():
 
         nip89config = NIP89Config()
         nip89config.DTAG = check_and_set_d_tag(
+                env_path.name,
                 identifier,
                 name,
                 dvm_config.PRIVATE_KEY,
                 nip89info["picture"]
-            )
+        )
 
         nip89config.CONTENT = json.dumps(nip89info)
         nip89config.KIND = EventDefinitions.KIND_NIP90_CONTENT_DISCOVERY
@@ -147,5 +151,11 @@ if __name__ == '__main__':
 
     dotenv.load_dotenv(env_path, verbose=True, override=True)
 
-    asyncio.run(configure_and_start_DVM())
+    test_results_dir = 'test_results'
+    new_dir_path = Path.cwd() / test_results_dir
+    if not new_dir_path.exists():
+        new_dir_path.mkdir(parents=True)
+
+
+    asyncio.run(configure_and_start_DVM(env_path))
 
