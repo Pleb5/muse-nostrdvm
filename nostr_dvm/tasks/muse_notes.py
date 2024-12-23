@@ -10,6 +10,7 @@ from nostr_dvm.utils.openai_utils import fetch_classification_response
 
 from nostr_sdk import\
                     Event,\
+                    EventId,\
                     Options,\
                     PublicKey,\
                     RelayFilteringMode,\
@@ -248,7 +249,13 @@ class MuseNotes(DVMTaskInterface):
         processed_kind1_list = []
 
         for event_id in all_processed_kind1s:
-            e_tag = Tag.parse(["e", event_id])
+            id:EventId = EventId.parse(event_id)
+            relays_seen = await self.database.event_seen_on_relays(id)
+            relay_hint = ''
+            if relays_seen is not None:
+                relay_hint = relays_seen[0]
+
+            e_tag = Tag.parse(["e", event_id, relay_hint])
             processed_kind1_list.append(e_tag.as_vec())
 
         result_list = processed_kind1_list[:int(options["max_results"])]

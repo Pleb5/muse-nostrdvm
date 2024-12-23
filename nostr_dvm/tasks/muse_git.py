@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 
 from nostr_sdk import Alphabet,\
                     Event,\
+                    EventId,\
                     Options,\
                     PublicKey,\
                     RelayFilteringMode,\
@@ -243,7 +244,14 @@ class MuseGit(DVMTaskInterface):
 
         # How should the posts be arranged in the result?
         for event_id in open_issue_events:
-            e_tag = Tag.parse(["e", event_id])
+            id:EventId = EventId.parse(event_id)
+            relays_seen = await self.database.event_seen_on_relays(id)
+            relay_hint = ''
+
+            if relays_seen is not None:
+                relay_hint = relays_seen[0]
+
+            e_tag = Tag.parse(["e", event_id, relay_hint])
             open_issues_list.append(e_tag.as_vec())
 
         result_list = open_issues_list[:int(options["max_results"])]
