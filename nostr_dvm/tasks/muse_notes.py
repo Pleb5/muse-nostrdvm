@@ -266,7 +266,7 @@ class MuseNotes(DVMTaskInterface):
             pass 
 
         with open(self.posts_file_path, 'r') as file:
-            lines = file.readlines()
+            lines = reversed(file.readlines())
         for line in lines:
             # print(f"Reading line from saved processed notes file:\n{line}\n")
             parsed_line = line.split(":", 1)
@@ -566,7 +566,7 @@ class MuseNotes(DVMTaskInterface):
 
         all_processed_kind1s.sort(
             key=lambda event: event.created_at().as_secs(),
-            reverse=True
+            reverse=False
         )
 
         timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
