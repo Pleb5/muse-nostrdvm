@@ -438,8 +438,8 @@ class MuseGit(DVMTaskInterface):
 
 
     def wot_outdated(self) -> bool:
-        # Update wot every 2 days
-        elapsed_time = timedelta(days=2)
+        # Update wot every 4 days
+        elapsed_time = timedelta(days=4)
 
         if not os.path.exists(self.wot_file_path):
             print("WOT file does not exist, no wot yet")
@@ -708,8 +708,8 @@ class MuseGit(DVMTaskInterface):
 
 
     def issues_outdated(self) -> bool:
-        # Update wot every 2 days
-        elapsed_time = timedelta(days=2)
+        # Update wot every 1 days
+        elapsed_time = timedelta(days=1)
 
         if not os.path.exists(self.last_issues_fetch_file_path):
             print("Last issues fetched file does not exist, no fetch yet")
